@@ -1,0 +1,127 @@
+-- Хранит метаданные о каждом измеряемом параметре
+CREATE TABLE parameter_types (
+    id INTEGER NOT NULL PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE,
+    min_value DECIMAL,
+    max_value DECIMAL,
+    default_value DECIMAL NOT NULL
+);
+
+-- Базовые единицы измерения
+CREATE TABLE base_units (
+    id INTEGER NOT NULL PRIMARY KEY,
+    name VARCHAR(20) NOT NULL,
+    parameter_type_id INTEGER NOT NULL REFERENCES parameter_types (id)
+);
+
+-- Конкретные единицы с коэффициентом конвертации
+CREATE TABLE units (
+    id INTEGER NOT NULL PRIMARY KEY,
+    name VARCHAR(20) NOT NULL,
+    conversion DECIMAL NOT NULL,
+    base_unit_id INTEGER NOT NULL REFERENCES base_units (id)
+);
+
+-- Копируем метаданные параметров в новый справочник
+INSERT INTO parameter_types (id, name, min_value, max_value, default_value)
+SELECT id, name, min_value, max_value, default_value
+FROM parameters;
+
+-- Для каждого типа параметра определяем базовую единицу
+INSERT INTO base_units (id, name, parameter_type_id) VALUES (1, 'м', 1);
+INSERT INTO base_units (id, name, parameter_type_id) VALUES (2, 'грC', 2);
+INSERT INTO base_units (id, name, parameter_type_id) VALUES (3, 'гПа', 3);
+INSERT INTO base_units (id, name, parameter_type_id) VALUES (4, 'гр', 4);
+INSERT INTO base_units (id, name, parameter_type_id) VALUES (5, 'м/с', 5);
+INSERT INTO base_units (id, name, parameter_type_id) VALUES (6, 'м', 6);
+
+-- Добавляем конкретные единицы с коэффициентами пересчёта к базовой
+
+-- Единицы для длины
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (1, 'м', 1, 1);      
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (2, 'см', 0.01, 1); 
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (3, 'мм', 0.001, 1);
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (4, 'км', 1000, 1); 
+
+-- Единицы для температуры
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (5, 'грC', 1, 2);
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (6, 'грF', 0.5556, 2);
+
+-- Единицы для давления
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (7, 'гПа', 1, 3);
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (8, 'мм рт.ст.', 1.333, 3);
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (9, 'Па', 0.01, 3);
+
+-- Единицы для углов
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (10, 'гр', 1, 4);
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (11, 'рад', 57.2958, 4);
+
+-- Единицы для скорости
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (12, 'м/с', 1, 5);
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (13, 'км/ч', 0.2778, 5);
+
+-- Единицы для дальности сноса
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (14, 'м', 1, 6);
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES (15, 'см', 0.01, 6);
+
+-- Удаление внешнего ключа из batches
+
+ALTER TABLE batches DROP CONSTRAINT batches_parameter_id_fkey;
+
+
+-- Перестройка таблицы parameters
+-- Старая parameters была справочником параметров
+-- Новая parameters будет хранить фактические измерения
+
+-- Создаём таблицу с новой структурой
+CREATE TABLE parameters_new (
+    id INTEGER NOT NULL PRIMARY KEY,
+    parameter_type_id INTEGER NOT NULL REFERENCES parameter_types (id),
+    value DECIMAL NOT NULL,
+    batch_id INTEGER NOT NULL
+);
+
+-- Мигрируем данные
+INSERT INTO parameters_new (id, parameter_type_id, value, batch_id)
+SELECT
+    b.id,
+    b.parameter_id,
+    b.param_value,
+    b.id
+FROM batches AS b;
+
+-- Удаляем старую таблицу parameters
+DROP TABLE parameters;
+
+-- Переименовываем новую таблицу
+ALTER TABLE parameters_new RENAME TO parameters;
+
+--Очистка таблицы batches
+
+-- Удаляем дубликаты
+DELETE FROM batches
+WHERE id NOT IN (
+    SELECT MIN(id)
+    FROM batches
+    GROUP BY batch_number
+);
+
+-- Удаляем поля, которые теперь хранятся в parameters
+ALTER TABLE batches DROP COLUMN parameter_id;
+ALTER TABLE batches DROP COLUMN param_value;
+ALTER TABLE batches DROP COLUMN batch_number;
+
+-- Итоговый запрос
+
+SELECT
+    b.time_at AS "Дата измерения",
+    b.id AS "Номер пачки",
+    u.full_name AS "ФИО сотрудника",
+    pt.name || ', ' || bu.name AS "Параметр и ед. изм.",
+    p.value AS "Значение"
+FROM batches AS b
+    JOIN parameters AS p ON p.batch_id = b.id
+    JOIN users AS u ON u.id = b.user_id
+    JOIN parameter_types AS pt ON pt.id = p.parameter_type_id
+    JOIN base_units AS bu ON bu.parameter_type_id = pt.id
+ORDER BY b.time_at, b.id, pt.id;
