@@ -1,0 +1,67 @@
+-- 1 Одинаковое количество измерений у каждого пользователя
+
+SELECT
+    u.id AS user_id,
+    u.login,
+    u.full_name,
+    COUNT(p.id) AS measurements_count
+FROM users AS u
+    LEFT JOIN batches AS b ON b.user_id = u.id
+    LEFT JOIN parameters AS p ON p.batch_id = b.id
+GROUP BY u.id, u.login, u.full_name
+ORDER BY measurements_count DESC;
+
+-- 2 Отсутствие пустых пачек измерений
+
+SELECT
+    b.id AS batch_id,
+    b.time_at,
+    COUNT(p.id) AS parameters_count
+FROM batches AS b
+    LEFT JOIN parameters AS p ON p.batch_id = b.id
+GROUP BY b.id, b.time_at
+HAVING COUNT(p.id) = null;
+
+-- 3 Каждая пачка содержит полное количество параметров
+
+SELECT
+    b.id AS batch_id,
+    b.time_at,
+    COUNT(p.id) AS parameters_count
+FROM batches AS b
+    LEFT JOIN parameters AS p ON p.batch_id = b.id
+GROUP BY b.id, b.time_at
+HAVING COUNT(p.id) != 5;
+
+-- 4 Значения в рамках допустимых диапазонов
+
+SELECT
+    p.id AS parameter_id,
+    b.id AS batch_id,
+    pt.name AS parameter_name,
+    p.value,
+    pt.min_value,
+    pt.max_value
+FROM parameters AS p
+    JOIN batches AS b ON b.id = p.batch_id
+    JOIN parameter_types AS pt ON pt.id = p.parameter_type_id
+WHERE (pt.min_value IS NOT NULL AND p.value < pt.min_value)
+   OR (pt.max_value IS NOT NULL AND p.value > pt.max_value);
+
+-- 5 Корректность единиц измерения по отношению к параметрам
+
+SELECT
+    pt.id AS parameter_type_id,
+    pt.name AS parameter_name,
+    bu.name AS base_unit_name,
+    CASE
+        WHEN pt.id = 1 AND bu.name = 'м' THEN 'OK'
+        WHEN pt.id = 2 AND bu.name = '°C' THEN 'OK'
+        WHEN pt.id = 3 AND bu.name = 'гПа' THEN 'OK'
+        WHEN pt.id = 4 AND bu.name = '°' THEN 'OK'
+        WHEN pt.id = 5 AND bu.name = 'м/с' THEN 'OK'
+        WHEN pt.id = 6 AND bu.name = 'м' THEN 'OK'
+        ELSE 'ERROR'
+    END AS validation
+FROM parameter_types AS pt
+    JOIN base_units AS bu ON bu.parameter_type_id = pt.id;
