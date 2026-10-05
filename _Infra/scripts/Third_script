@@ -20,7 +20,7 @@ SELECT
 FROM batches AS b
     LEFT JOIN parameters AS p ON p.batch_id = b.id
 GROUP BY b.id, b.time_at
-HAVING COUNT(p.id) = null;
+HAVING COUNT(p.id) = 0;
 
 -- 3 Каждая пачка содержит полное количество параметров
 
