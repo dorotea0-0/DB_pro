@@ -1,4 +1,5 @@
--- Хранит метаданные о каждом измеряемом параметре
+--Миграция
+
 CREATE TABLE parameter_types (
     id INTEGER NOT NULL PRIMARY KEY,
     name VARCHAR(50) NOT NULL UNIQUE,
@@ -7,14 +8,12 @@ CREATE TABLE parameter_types (
     default_value DECIMAL NOT NULL
 );
 
--- Базовые единицы измерения
 CREATE TABLE base_units (
     id INTEGER NOT NULL PRIMARY KEY,
     name VARCHAR(20) NOT NULL,
     parameter_type_id INTEGER NOT NULL REFERENCES parameter_types (id)
 );
 
--- Конкретные единицы с коэффициентом конвертации
 CREATE TABLE units (
     id INTEGER NOT NULL PRIMARY KEY,
     name VARCHAR(20) NOT NULL,
@@ -22,58 +21,34 @@ CREATE TABLE units (
     base_unit_id INTEGER NOT NULL REFERENCES base_units (id)
 );
 
--- Копируем метаданные параметров в новый справочник
+-- Переносим старый справочник параметров в parameter_types
 INSERT INTO parameter_types (id, name, min_value, max_value, default_value)
-SELECT id, name, min_value, max_value, default_value
-FROM parameters;
+SELECT id, name, min_value, max_value, default_value FROM parameters;
 
--- Для каждого типа параметра определяем базовую единицу
-INSERT INTO base_units (id, name, parameter_type_id) VALUES (1, 'м', 1);
-INSERT INTO base_units (id, name, parameter_type_id) VALUES (2, 'грC', 2);
-INSERT INTO base_units (id, name, parameter_type_id) VALUES (3, 'гПа', 3);
-INSERT INTO base_units (id, name, parameter_type_id) VALUES (4, 'гр', 4);
-INSERT INTO base_units (id, name, parameter_type_id) VALUES (5, 'м/с', 5);
-INSERT INTO base_units (id, name, parameter_type_id) VALUES (6, 'м', 6);
+-- Базовые единицы для каждого типа параметра
+INSERT INTO base_units (id, name, parameter_type_id) VALUES 
+(1, 'м', 1), (2, 'грC', 2), (3, 'гПа', 3), 
+(4, 'гр', 4), (5, 'м/с', 5), (6, 'м', 6);
 
--- Добавляем конкретные единицы с коэффициентами пересчёта к базовой
+-- Конкретные единицы с коэффициентами пересчёта к базовой
+INSERT INTO units (id, name, conversion, base_unit_id) VALUES 
+-- Длина
+(1, 'м', 1, 1), (2, 'см', 0.01, 1), (3, 'мм', 0.001, 1), (4, 'км', 1000, 1),
+-- Температура 
+(5, 'грC', 1, 2), (6, 'грF', 0.5556, 2),
+-- Давление
+(7, 'гПа', 1, 3), (8, 'мм рт.ст.', 1.333, 3), (9, 'Па', 0.01, 3),
+-- Углы 
+(10, 'гр', 1, 4), (11, 'рад', 57.2958, 4),
+-- Скорость
+(12, 'м/с', 1, 5), (13, 'км/ч', 0.2778, 5),
+-- Дальность сноса
+(14, 'м', 1, 6), (15, 'см', 0.01, 6);
 
--- Единицы для длины
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (1, 'м', 1, 1);      
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (2, 'см', 0.01, 1); 
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (3, 'мм', 0.001, 1);
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (4, 'км', 1000, 1); 
-
--- Единицы для температуры
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (5, 'грC', 1, 2);
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (6, 'грF', 0.5556, 2);
-
--- Единицы для давления
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (7, 'гПа', 1, 3);
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (8, 'мм рт.ст.', 1.333, 3);
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (9, 'Па', 0.01, 3);
-
--- Единицы для углов
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (10, 'гр', 1, 4);
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (11, 'рад', 57.2958, 4);
-
--- Единицы для скорости
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (12, 'м/с', 1, 5);
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (13, 'км/ч', 0.2778, 5);
-
--- Единицы для дальности сноса
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (14, 'м', 1, 6);
-INSERT INTO units (id, name, conversion, base_unit_id) VALUES (15, 'см', 0.01, 6);
-
--- Удаление внешнего ключа из batches
-
+-- Разрываем старую связь batches и parameters
 ALTER TABLE batches DROP CONSTRAINT batches_parameter_id_fkey;
 
-
--- Перестройка таблицы parameters
--- Старая parameters была справочником параметров
--- Новая parameters будет хранить фактические измерения
-
--- Создаём таблицу с новой структурой
+-- Создаём новую таблицу parameters, она теперь хранит фактические замеры
 CREATE TABLE parameters_new (
     id INTEGER NOT NULL PRIMARY KEY,
     parameter_type_id INTEGER NOT NULL REFERENCES parameter_types (id),
@@ -81,38 +56,137 @@ CREATE TABLE parameters_new (
     batch_id INTEGER NOT NULL
 );
 
--- Мигрируем данные
+-- Мигрируем данные, используя MIN для каждого batch_number как batch_id
+-- Это гарантирует, что batch_id будет существовать после удаления дубликатов
 INSERT INTO parameters_new (id, parameter_type_id, value, batch_id)
-SELECT
-    b.id,
-    b.parameter_id,
-    b.param_value,
-    b.id
+SELECT 
+    b.id, 
+    b.parameter_id, 
+    b.param_value, 
+    (SELECT MIN(id) FROM batches b2 WHERE b2.batch_number = b.batch_number)
 FROM batches AS b;
 
--- Удаляем старую таблицу parameters
-DROP TABLE parameters;
+-- Теперь удаляем дубликаты из batches
+DELETE FROM batches WHERE id NOT IN (SELECT MIN(id) FROM batches GROUP BY batch_number);
 
 -- Переименовываем новую таблицу
+DROP TABLE parameters;
 ALTER TABLE parameters_new RENAME TO parameters;
 
---Очистка таблицы batches
-
--- Удаляем дубликаты
-DELETE FROM batches
-WHERE id NOT IN (
-    SELECT MIN(id)
-    FROM batches
-    GROUP BY batch_number
-);
-
--- Удаляем поля, которые теперь хранятся в parameters
+-- Убираем из batches поля, которые переехали в parameters
 ALTER TABLE batches DROP COLUMN parameter_id;
 ALTER TABLE batches DROP COLUMN param_value;
 ALTER TABLE batches DROP COLUMN batch_number;
 
--- Итоговый запрос
+-- Таблица "Расчет температуры"
 
+CREATE TABLE temperature_calculations (
+    id SERIAL PRIMARY KEY,
+    batch_id INTEGER NOT NULL REFERENCES batches(id) ON DELETE CASCADE,
+    original_celsius DECIMAL NOT NULL,
+    calculated_kelvin DECIMAL NOT NULL,
+    calculation_rule VARCHAR(100),
+    calculated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Пересчёт температуры
+INSERT INTO temperature_calculations (batch_id, original_celsius, calculated_kelvin, calculation_rule)
+SELECT 
+    p.batch_id,
+    p.value,
+    ROUND((p.value + 273.15)::numeric, 2),
+    'K = C + 273.15'
+FROM parameters p
+JOIN parameter_types pt ON pt.id = p.parameter_type_id
+WHERE pt.name = 'Температура';
+
+-- Транзакция 1: структура и счётчики
+BEGIN;
+
+CREATE SEQUENCE seq_t1_positions START 1;
+CREATE SEQUENCE seq_t1_users START 1;
+CREATE SEQUENCE seq_t1_batches START 1;
+CREATE SEQUENCE seq_t1_measurements START 1;
+
+CREATE TABLE t1_positions (
+    id INTEGER NOT NULL DEFAULT nextval('seq_t1_positions') PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE
+);
+
+CREATE TABLE t1_users (
+    id INTEGER NOT NULL DEFAULT nextval('seq_t1_users') PRIMARY KEY,
+    login VARCHAR(20) NOT NULL UNIQUE,
+    full_name VARCHAR(100) NOT NULL,
+    position_id INTEGER NOT NULL
+);
+
+CREATE TABLE t1_batches (
+    id INTEGER NOT NULL DEFAULT nextval('seq_t1_batches') PRIMARY KEY,
+    batch_number INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    measured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE t1_measurements (
+    id INTEGER NOT NULL DEFAULT nextval('seq_t1_measurements') PRIMARY KEY,
+    batch_id INTEGER NOT NULL,
+    parameter_name VARCHAR(50) NOT NULL,
+    value DECIMAL NOT NULL,
+    unit VARCHAR(20) NOT NULL
+);
+
+COMMIT;
+
+-- Транзакция 2: тестовые данные
+BEGIN;
+
+INSERT INTO t1_positions (name) VALUES ('Командир'), ('Наводчик'), ('Заряжающий');
+
+INSERT INTO t1_users (login, full_name, position_id) VALUES 
+('USR01', 'Иванов Иван Иванович', 1),
+('USR02', 'Петров Петр Петрович', 2);
+
+INSERT INTO t1_batches (batch_number, user_id, measured_at) VALUES 
+(1001, 1, '2026-10-10 10:00:00'),
+(1002, 2, '2026-10-10 11:30:00');
+
+INSERT INTO t1_measurements (batch_id, parameter_name, value, unit) VALUES 
+(1, 'Температура', 15.5, 'грC'),
+(1, 'Давление', 750, 'гПа'),
+(2, 'Ветер', 4.5, 'м/с');
+
+COMMIT;
+
+-- Транзакция 3: связи и ограничения
+BEGIN;
+
+ALTER TABLE t1_users ADD CONSTRAINT fk_t1_users_pos 
+    FOREIGN KEY (position_id) REFERENCES t1_positions(id) ON DELETE RESTRICT;
+
+ALTER TABLE t1_batches ADD CONSTRAINT fk_t1_batches_usr 
+    FOREIGN KEY (user_id) REFERENCES t1_users(id) ON DELETE CASCADE;
+
+ALTER TABLE t1_measurements ADD CONSTRAINT fk_t1_meas_batch 
+    FOREIGN KEY (batch_id) REFERENCES t1_batches(id) ON DELETE CASCADE;
+
+ALTER TABLE t1_batches ADD CONSTRAINT chk_t1_batch_pos 
+    CHECK (batch_number > 0);
+
+COMMIT;
+
+--Задание 2 метаданные
+
+SELECT 
+    ROW_NUMBER() OVER (ORDER BY table_name) AS "№",
+    table_name AS "Наименование",
+    'Таблица' AS "Тип"
+FROM information_schema.tables 
+WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+ORDER BY "№";
+
+--Итоговые запросы
+
+-- Основной отчёт по пачкам
 SELECT
     b.time_at AS "Дата измерения",
     b.id AS "Номер пачки",
@@ -125,3 +199,16 @@ FROM batches AS b
     JOIN parameter_types AS pt ON pt.id = p.parameter_type_id
     JOIN base_units AS bu ON bu.parameter_type_id = pt.id
 ORDER BY b.time_at, b.id, pt.id;
+
+-- Отчёт по расчётам температуры
+SELECT 
+    tc.id AS "№",
+    b.id AS "Пачка",
+    u.full_name AS "Сотрудник",
+    tc.original_celsius AS "°C",
+    tc.calculated_kelvin AS "K",
+    tc.calculation_rule AS "Правило"
+FROM temperature_calculations tc
+JOIN batches b ON tc.batch_id = b.id
+JOIN users u ON b.user_id = u.id
+ORDER BY tc.id;
