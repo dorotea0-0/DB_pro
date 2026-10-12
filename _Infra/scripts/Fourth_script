@@ -1,0 +1,158 @@
+DROP TABLE IF EXISTS t1_measurements CASCADE;
+DROP TABLE IF EXISTS t1_batches CASCADE;
+DROP TABLE IF EXISTS t1_users CASCADE;
+DROP TABLE IF EXISTS t1_positions CASCADE;
+DROP SEQUENCE IF EXISTS seq_t1_measurements;
+DROP SEQUENCE IF EXISTS seq_t1_batches;
+DROP SEQUENCE IF EXISTS seq_t1_users;
+DROP SEQUENCE IF EXISTS seq_t1_positions;
+
+-- Транзакция 1: Создание структуры таблиц и счётчиков
+BEGIN;
+
+-- Создаём последовательности для автоинкремента id
+CREATE SEQUENCE seq_t1_positions START 1;
+CREATE SEQUENCE seq_t1_users START 1;
+CREATE SEQUENCE seq_t1_batches START 1;
+CREATE SEQUENCE seq_t1_measurements START 1;
+
+-- Справочник должностей
+CREATE TABLE t1_positions (
+    id INTEGER NOT NULL DEFAULT nextval('seq_t1_positions') PRIMARY KEY,
+    name VARCHAR(50) NOT NULL UNIQUE
+);
+
+-- Пользователи
+CREATE TABLE t1_users (
+    id INTEGER NOT NULL DEFAULT nextval('seq_t1_users') PRIMARY KEY,
+    login VARCHAR(20) NOT NULL UNIQUE,
+    full_name VARCHAR(100) NOT NULL,
+    position_id INTEGER NOT NULL
+);
+
+-- Пачки измерений
+CREATE TABLE t1_batches (
+    id INTEGER NOT NULL DEFAULT nextval('seq_t1_batches') PRIMARY KEY,
+    batch_number INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    measured_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Сами измерения
+CREATE TABLE t1_measurements (
+    id INTEGER NOT NULL DEFAULT nextval('seq_t1_measurements') PRIMARY KEY,
+    batch_id INTEGER NOT NULL,
+    parameter_name VARCHAR(50) NOT NULL,
+    value DECIMAL NOT NULL,
+    unit VARCHAR(20) NOT NULL
+);
+
+COMMIT;
+
+--Транзакция 2: Наполнение тестовыми данными
+BEGIN;
+
+INSERT INTO t1_positions (name) VALUES 
+('Командир'), 
+('Наводчик'), 
+('Заряжающий');
+
+INSERT INTO t1_users (login, full_name, position_id) VALUES 
+('USR01', 'Иванов Иван Иванович', 1),
+('USR02', 'Петров Петр Петрович', 2),
+('USR03', 'Сидоров Сидор Сидорович', 3);
+
+INSERT INTO t1_batches (batch_number, user_id, measured_at) VALUES 
+(1001, 1, '2026-10-10 10:00:00'),
+(1002, 2, '2026-10-10 11:30:00'),
+(1003, 3, '2026-10-10 14:15:00');
+
+INSERT INTO t1_measurements (batch_id, parameter_name, value, unit) VALUES 
+(1, 'Температура', 15.5, 'грC'),
+(1, 'Давление', 750, 'гПа'),
+(2, 'Температура', 18.2, 'грC'),
+(2, 'Влажность', 65, '%'),
+(3, 'Скорость ветра', 4.5, 'м/с');
+
+COMMIT;
+
+-- Транзакция 3: Создание связей и ограничений
+BEGIN;
+
+-- Связь: пользователь - должность (нельзя удалить должность, пока есть пользователи)
+ALTER TABLE t1_users 
+ADD CONSTRAINT fk_t1_users_position
+FOREIGN KEY (position_id) REFERENCES t1_positions(id) ON DELETE RESTRICT;
+
+-- Связь: пачка - пользователь (при удалении пользователя удалятся его пачки)
+ALTER TABLE t1_batches 
+ADD CONSTRAINT fk_t1_batches_user
+FOREIGN KEY (user_id) REFERENCES t1_users(id) ON DELETE CASCADE;
+
+-- Связь: измерение - пачка (каскадное удаление)
+ALTER TABLE t1_measurements 
+ADD CONSTRAINT fk_t1_measurements_batch
+FOREIGN KEY (batch_id) REFERENCES t1_batches(id) ON DELETE CASCADE;
+
+-- Ограничение: номер пачки должен быть положительным
+ALTER TABLE t1_batches 
+ADD CONSTRAINT chk_t1_batch_number_positive
+CHECK (batch_number > 0);
+
+-- Ограничение: значение измерения не может быть NULL
+ALTER TABLE t1_measurements 
+ADD CONSTRAINT chk_t1_value_not_null
+CHECK (value IS NOT NULL);
+
+COMMIT;
+
+--Запрос к метаданным (information_schema)
+
+SELECT 
+    ROW_NUMBER() OVER (ORDER BY table_name) AS "№",
+    table_name AS "Наименование",
+    'Таблица' AS "Тип"
+FROM information_schema.tables 
+WHERE table_schema = 'public' 
+  AND table_name LIKE 't1_%'  -- показываем только наши новые таблицы
+  AND table_type = 'BASE TABLE'
+ORDER BY "№";
+
+-- Дополнительно: информация о колонках наших таблиц
+SELECT 
+    table_name AS "Таблица",
+    column_name AS "Колонка",
+    data_type AS "Тип данных",
+    is_nullable AS "NULL?",
+    COALESCE(character_maximum_length::VARCHAR, '') AS "Длина"
+FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name LIKE 't1_%'
+ORDER BY table_name, ordinal_position;
+
+-- Информация о последовательностях
+SELECT 
+    sequence_name AS "Наименование",
+    data_type AS "Тип",
+    start_value AS "Старт",
+    minimum_value AS "Мин",
+    maximum_value AS "Макс"
+FROM information_schema.sequences
+WHERE sequence_schema = 'public'
+  AND sequence_name LIKE 'seq_t1_%'
+ORDER BY sequence_name;
+
+-- Проверочный запрос
+
+SELECT 
+    b.batch_number AS "Пачка",
+    u.full_name AS "Сотрудник",
+    p.name AS "Должность",
+    m.parameter_name AS "Параметр",
+    m.value AS "Значение",
+    m.unit AS "Ед. изм."
+FROM t1_batches b
+JOIN t1_users u ON u.id = b.user_id
+JOIN t1_positions p ON p.id = u.position_id
+JOIN t1_measurements m ON m.batch_id = b.id
+ORDER BY b.batch_number, m.id;
