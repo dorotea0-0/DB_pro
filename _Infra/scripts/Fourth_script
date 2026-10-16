@@ -1,0 +1,507 @@
+DO
+$$
+BEGIN
+    -- Сначала чистим всё, что могло остаться от предыдущих запусков
+    DROP TABLE IF EXISTS parameters CASCADE;
+    DROP TABLE IF EXISTS batch CASCADE;
+    DROP TABLE IF EXISTS soldiers CASCADE;
+    DROP TABLE IF EXISTS ranks CASCADE;
+    DROP TABLE IF EXISTS devices CASCADE;
+    DROP TABLE IF EXISTS unit_meas CASCADE;
+    DROP TABLE IF EXISTS base_unit_meas CASCADE;
+    DROP TABLE IF EXISTS type_parameter CASCADE;
+    DROP TABLE IF EXISTS temp_correction;
+    
+    -- Удаляем все последовательности
+    DROP SEQUENCE IF EXISTS seq_soldiers CASCADE;
+    DROP SEQUENCE IF EXISTS seq_base_unit_meas CASCADE;
+    DROP SEQUENCE IF EXISTS seq_batch CASCADE;
+    DROP SEQUENCE IF EXISTS seq_devices CASCADE;
+    DROP SEQUENCE IF EXISTS seq_parameters CASCADE;
+    DROP SEQUENCE IF EXISTS seq_ranks CASCADE;
+    DROP SEQUENCE IF EXISTS seq_type_parameter CASCADE;
+    DROP SEQUENCE IF EXISTS seq_unit_meas CASCADE;
+    DROP SEQUENCE IF EXISTS seq_temp_correction;
+
+    -- Создаём последовательности для автогенерации ID
+    CREATE SEQUENCE seq_soldiers;
+    CREATE SEQUENCE seq_base_unit_meas;
+    CREATE SEQUENCE seq_batch;
+    CREATE SEQUENCE seq_devices;
+    CREATE SEQUENCE seq_parameters;
+    CREATE SEQUENCE seq_ranks;
+    CREATE SEQUENCE seq_type_parameter;
+    CREATE SEQUENCE seq_unit_meas;
+    CREATE SEQUENCE seq_temp_correction;
+	-- Справочник военных званий
+    -- Хранит все возможные звания от рядового до полковника
+    CREATE TABLE ranks(
+        id INT PRIMARY KEY DEFAULT nextval('seq_ranks'),
+        rank TEXT
+    );
+    COMMENT ON TABLE ranks IS 'Справочник военных званий';
+    COMMENT ON COLUMN ranks.rank IS 'Название звания';
+
+    -- Справочник типов измерительного оборудования
+    CREATE TABLE devices(
+        id INT PRIMARY KEY DEFAULT nextval('seq_devices'),
+        name TEXT
+    );
+    COMMENT ON TABLE devices IS 'Справочник типов оборудования для измерений';
+    COMMENT ON COLUMN devices.name IS 'Название оборудования';
+
+    -- Таблица военнослужащих
+    CREATE TABLE soldiers(
+        id INT PRIMARY KEY DEFAULT nextval('seq_soldiers'),
+        personal_id INT,
+        rank_id INT
+    );
+    COMMENT ON TABLE soldiers IS 'Справочник военнослужащих';
+    COMMENT ON COLUMN soldiers.personal_id IS 'Личный номер военнослужащего';
+    COMMENT ON COLUMN soldiers.rank_id IS 'Звание военнослужащего из ranks';
+
+    -- Базовые единицы измерения
+    CREATE TABLE base_unit_meas (
+        id INT PRIMARY KEY DEFAULT nextval('seq_base_unit_meas'),
+        name TEXT
+    );
+    COMMENT ON TABLE base_unit_meas IS 'Справочник базовых единиц измерения';
+    COMMENT ON COLUMN base_unit_meas.id IS 'Уникальный код ед. измерения';
+    COMMENT ON COLUMN base_unit_meas.name IS 'Единица измерения';
+
+    -- Все единицы измерения (включая производные)
+    CREATE TABLE unit_meas (
+        id INT PRIMARY KEY DEFAULT nextval('seq_unit_meas'),
+        base_id INT,
+        name TEXT,
+        factor NUMERIC
+    );
+    COMMENT ON TABLE unit_meas IS 'Справочник всех единиц измерения';
+    COMMENT ON COLUMN unit_meas.id IS 'Уникальный код ед. измерения';
+    COMMENT ON COLUMN unit_meas.name IS 'Единица измерения';
+    COMMENT ON COLUMN unit_meas.base_id IS 'Уникальный код базовой единицы';
+    COMMENT ON COLUMN unit_meas.factor IS 'Коэффициент от базовой единицы';
+
+    -- Справочник типов параметров, которые мы измеряем
+    -- Высота, температура, давление, ветер
+    CREATE TABLE type_parameter (
+        id INT PRIMARY KEY DEFAULT nextval('seq_type_parameter'),
+        name TEXT
+    );
+    COMMENT ON TABLE type_parameter IS 'Справочник типов параметров для измерения';
+    COMMENT ON COLUMN type_parameter.id IS 'Уникальный код типа параметра';
+    COMMENT ON COLUMN type_parameter.name IS 'Тип параметра';
+
+    -- Таблица параметров измерений
+    -- Здесь хранятся фактические значения
+    -- Это центральная таблица, которая связывает всё вместе
+    CREATE TABLE parameters (
+        id INT PRIMARY KEY DEFAULT nextval('seq_parameters'),
+        batch_id INT,
+        type_par_id INT,
+        unit_meas_id INT,
+        value NUMERIC
+    );
+    COMMENT ON TABLE parameters IS 'Параметры метеорологических измерений для расчёта';
+    COMMENT ON COLUMN parameters.id IS 'Уникальный код параметра';
+    COMMENT ON COLUMN parameters.batch_id IS 'Уникальный код пачки';
+    COMMENT ON COLUMN parameters.type_par_id IS 'Уникальный код типа параметра';
+    COMMENT ON COLUMN parameters.unit_meas_id IS 'Уникальный код ед. измерения';
+    COMMENT ON COLUMN parameters.value IS 'Значение параметра';
+
+    -- Таблица пачек измерений
+    CREATE TABLE batch(
+        id INT PRIMARY KEY DEFAULT nextval('seq_batch'),
+        soldier_id INT,
+        device_id INT,
+        measured_at TIMESTAMPTZ DEFAULT now()
+    );
+    COMMENT ON TABLE batch IS 'История измерений (кто, параметры и дата)';
+    COMMENT ON COLUMN batch.soldier_id IS 'Военнослужащий из soldiers';
+    COMMENT ON COLUMN batch.device_id IS 'Уникальный код устройства';
+    COMMENT ON COLUMN batch.measured_at IS 'Дата и время измерения';
+
+    -- Таблица температурных поправок (виртуальная таблица из задания)
+    CREATE TABLE temp_correction (
+        id INT PRIMARY KEY DEFAULT nextval('seq_temp_correction'),
+        t0 NUMERIC NOT NULL,
+        delta_tv NUMERIC
+    );
+    COMMENT ON TABLE temp_correction IS 'Корректировка температуры';
+    COMMENT ON COLUMN temp_correction.id IS 'Уникальный код поправки';
+    COMMENT ON COLUMN temp_correction.t0 IS 'Измеренная температура';
+    COMMENT ON COLUMN temp_correction.delta_tv IS 'Виртуальная поправка';
+
+    -- Фиксируем первую транзакцию - структура создана
+    savepoint transaction_1;
+	-- 1. Заполняем справочник званий
+    -- Берём только сухопутные звания от рядового до полковника
+    INSERT INTO ranks(rank) VALUES
+    ('рядовой'),
+    ('ефрейтор'),
+    ('младший сержант'),
+    ('сержант'),
+    ('старший сержант'),
+    ('старшина'),
+    ('прапорщик'),
+    ('старший прапорщик'),
+    ('младший лейтенант'),
+    ('лейтенант'),
+    ('старший лейтенант'),
+    ('капитан'),
+    ('майор'),
+    ('подполковник'),
+    ('полковник');
+
+    -- 2. Заполняем справочник устройств
+    INSERT INTO devices(name) VALUES
+    ('ДМК'),
+    ('ВР');
+
+    -- 3. Создаём 6 военнослужащих с разными званиями
+    INSERT INTO soldiers(personal_id, rank_id) VALUES
+    (10000001, 1),
+    (10000002, 2),
+    (10000003, 3),
+    (10000004, 4),
+    (10000005, 5),
+    (10000006, 6);
+
+    -- 4. Базовые единицы измерения
+    INSERT INTO base_unit_meas(name) VALUES
+    ('метр'),
+    ('градус Цельсия'),
+    ('миллиметр ртутного столба'),
+    ('большое деление угломера'),
+    ('метр в секунду');
+
+    -- 5. Все единицы измерения с коэффициентами
+    INSERT INTO unit_meas(base_id, name, factor) VALUES
+    (1, 'метр над уровнем моря', 1),
+    (2, 'градус Цельсия',        1),
+    (3, 'мм рт. ст.',            1),
+    (4, 'большое деление угломера', 1),
+    (5, 'м/с',                   1);
+
+    -- 6. Типы параметров, которые мы будем измерять
+    -- Каждый тип имеет свой диапазон допустимых значений и единицу измерения
+    INSERT INTO type_parameter(name) VALUES
+    ('Высота метеопоста'),
+    ('Температура'),
+    ('Давление'),
+    ('Направление ветра'),
+    ('Скорость ветра'),
+    ('Дальность сноса пуль');
+
+    -- 7. Создаём пачки измерений
+
+    -- Время измерений уникальное для каждой пачки
+    INSERT INTO batch(soldier_id, device_id, measured_at) VALUES
+    -- солдат 1 (рядовой, ДМК) - 4 пачки
+    (1, 1, '2025-01-01 08:00:00+03'),
+    (1, 1, '2025-01-01 09:00:00+03'),
+    (1, 1, '2025-01-01 10:00:00+03'),
+    (1, 1, '2025-01-01 11:00:00+03'),
+    -- солдат 2 (ефрейтор, ВР) - 4 пачки
+    (2, 2, '2025-01-02 08:00:00+03'),
+    (2, 2, '2025-01-02 09:00:00+03'),
+    (2, 2, '2025-01-02 10:00:00+03'),
+    (2, 2, '2025-01-02 11:00:00+03'),
+    -- солдат 3 (младший сержант, ДМК) - 4 пачки
+    (3, 1, '2025-01-03 08:00:00+03'),
+    (3, 1, '2025-01-03 09:00:00+03'),
+    (3, 1, '2025-01-03 10:00:00+03'),
+    (3, 1, '2025-01-03 11:00:00+03'),
+    -- солдат 4 (сержант, ВР) - 4 пачки
+    (4, 2, '2025-01-04 08:00:00+03'),
+    (4, 2, '2025-01-04 09:00:00+03'),
+    (4, 2, '2025-01-04 10:00:00+03'),
+    (4, 2, '2025-01-04 11:00:00+03'),
+    -- солдат 5 (старший сержант, ДМК) - 4 пачки
+    (5, 1, '2025-01-05 08:00:00+03'),
+    (5, 1, '2025-01-05 09:00:00+03'),
+    (5, 1, '2025-01-05 10:00:00+03'),
+    (5, 1, '2025-01-05 11:00:00+03'),
+    -- солдат 6 (старшина, ВР) - 4 пачки
+    (6, 2, '2025-01-06 08:00:00+03'),
+    (6, 2, '2025-01-06 09:00:00+03'),
+    (6, 2, '2025-01-06 10:00:00+03'),
+    (6, 2, '2025-01-06 11:00:00+03');
+
+    -- 8. Заполняем параметры измерений
+
+    -- Значения подбираем так, чтобы покрыть весь диапазон допустимых значений
+    
+    -- Пачки с ДМК (солдаты 1, 3, 5) - batch_id 1-4, 9-12, 17-20
+    -- batch 1 (солдат 1, первая пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (1, 1, 1, 150),
+    (1, 2, 2, 12.5),
+    (1, 3, 3, 745),
+    (1, 4, 4, 12),
+    (1, 5, 5, 5);
+
+    -- batch 2 (солдат 1, вторая пачка) - температура отрицательная
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (2, 1, 1, 151),
+    (2, 2, 2, -3.4),
+    (2, 3, 3, 746),
+    (2, 4, 4, 23),
+    (2, 5, 5, 6);
+
+    -- batch 3 (солдат 1, третья пачка) - температура 0
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (3, 1, 1, 152),
+    (3, 2, 2, 0.0),
+    (3, 3, 3, 747),
+    (3, 4, 4, 34),
+    (3, 5, 5, 7);
+
+    -- batch 4 (солдат 1, четвёртая пачка) - высокая температура
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (4, 1, 1, 153),
+    (4, 2, 2, 25.7),
+    (4, 3, 3, 748),
+    (4, 4, 4, 45),
+    (4, 5, 5, 8);
+
+    -- batch 9 (солдат 3, первая пачка) - отрицательная высота
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (9, 1, 1, 200),
+    (9, 2, 2, -15.2),
+    (9, 3, 3, 760),
+    (9, 4, 4, 5),
+    (9, 5, 5, 0);
+
+    -- batch 10 (солдат 3, вторая пачка) - минимальная температура
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (10, 1, 1, 201),
+    (10, 2, 2, -58.0),
+    (10, 3, 3, 761),
+    (10, 4, 4, 16),
+    (10, 5, 5, 1);
+
+    -- batch 11 (солдат 3, третья пачка) - максимальная температура
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (11, 1, 1, 202),
+    (11, 2, 2, 58.0),
+    (11, 3, 3, 762),
+    (11, 4, 4, 27),
+    (11, 5, 5, 2);
+
+    -- batch 12 (солдат 3, четвёртая пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (12, 1, 1, 203),
+    (12, 2, 2, 10.1),
+    (12, 3, 3, 763),
+    (12, 4, 4, 38),
+    (12, 5, 5, 3);
+
+    -- batch 17 (солдат 5, первая пачка) - минимальное давление
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (17, 1, 1, -50),
+    (17, 2, 2, 5.5),
+    (17, 3, 3, 500),
+    (17, 4, 4, 0),
+    (17, 5, 5, 15);
+
+    -- batch 18 (солдат 5, вторая пачка) - максимальное давление
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (18, 1, 1, 0),
+    (18, 2, 2, -20.3),
+    (18, 3, 3, 900),
+    (18, 4, 4, 59),
+    (18, 5, 5, 14);
+
+    -- batch 19 (солдат 5, третья пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (19, 1, 1, 300),
+    (19, 2, 2, 30.0),
+    (19, 3, 3, 800),
+    (19, 4, 4, 11),
+    (19, 5, 5, 13);
+
+    -- batch 20 (солдат 5, четвёртая пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (20, 1, 1, 301),
+    (20, 2, 2, -40.7),
+    (20, 3, 3, 700),
+    (20, 4, 4, 22),
+    (20, 5, 5, 12);
+
+    -- Пачки с ВР (солдаты 2, 4, 6) - batch_id 5-8, 13-16, 21-24
+    -- Вместо скорости ветра измеряем дальность сноса пуль
+    
+    -- batch 5 (солдат 2, первая пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (5, 1, 1, 100),
+    (5, 2, 2, 15.5),
+    (5, 3, 3, 750),
+    (5, 4, 4, 10),
+    (5, 6, 1, 50);
+
+    -- batch 6 (солдат 2, вторая пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (6, 1, 1, 101),
+    (6, 2, 2, -5.5),
+    (6, 3, 3, 751),
+    (6, 4, 4, 21),
+    (6, 6, 1, 60);
+
+    -- batch 7 (солдат 2, третья пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (7, 1, 1, 102),
+    (7, 2, 2, 20.0),
+    (7, 3, 3, 752),
+    (7, 4, 4, 32),
+    (7, 6, 1, 70);
+
+    -- batch 8 (солдат 2, четвёртая пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (8, 1, 1, 103),
+    (8, 2, 2, -30.1),
+    (8, 3, 3, 753),
+    (8, 4, 4, 43),
+    (8, 6, 1, 80);
+
+    -- batch 13 (солдат 4, первая пачка) - минимальная дальность сноса
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (13, 1, 1, 250),
+    (13, 2, 2, 35.4),
+    (13, 3, 3, 770),
+    (13, 4, 4, 7),
+    (13, 6, 1, 0);     -- дальность сноса 0 м (минимум)
+
+    -- batch 14 (солдат 4, вторая пачка) - максимальная дальность сноса
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (14, 1, 1, 251),
+    (14, 2, 2, -45.6),
+    (14, 3, 3, 771),
+    (14, 4, 4, 18),
+    (14, 6, 1, 150);   -- дальность сноса 150 м (максимум)
+
+    -- batch 15 (солдат 4, третья пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (15, 1, 1, 252),
+    (15, 2, 2, 57.9),
+    (15, 3, 3, 772),
+    (15, 4, 4, 29),
+    (15, 6, 1, 140);
+
+    -- batch 16 (солдат 4, четвёртая пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (16, 1, 1, 253),
+    (16, 2, 2, -57.9),
+    (16, 3, 3, 773),
+    (16, 4, 4, 40),
+    (16, 6, 1, 130);
+
+    -- batch 21 (солдат 6, первая пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (21, 1, 1, 400),
+    (21, 2, 2, 1.1),
+    (21, 3, 3, 600),
+    (21, 4, 4, 3),
+    (21, 6, 1, 120);
+
+    -- batch 22 (солдат 6, вторая пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (22, 1, 1, 401),
+    (22, 2, 2, -1.1),
+    (22, 3, 3, 601),
+    (22, 4, 4, 14),
+    (22, 6, 1, 110);
+
+    -- batch 23 (солдат 6, третья пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (23, 1, 1, 402),
+    (23, 2, 2, 44.4),
+    (23, 3, 3, 602),
+    (23, 4, 4, 25),
+    (23, 6, 1, 100);
+
+    -- batch 24 (солдат 6, четвёртая пачка)
+    INSERT INTO parameters(batch_id, type_par_id, unit_meas_id, value) VALUES
+    (24, 1, 1, 403),
+    (24, 2, 2, -44.4),
+    (24, 3, 3, 603),
+    (24, 4, 4, 36),
+    (24, 6, 1, 90);
+
+    -- Заполняем таблицу температурных поправок
+    -- Чем выше температура, тем больше поправка
+    INSERT INTO temp_correction(t0, delta_tv) VALUES
+    (0,  0.5),
+    (5,  0.5),
+    (10, 1),
+    (15, 1),
+    (20, 1.5),
+    (25, 2),
+    (30, 3.5),
+    (40, 4.5);
+
+    -- Фиксируем вторую транзакцию - данные загружены
+	release savepoint transaction_1;
+
+    -- Делаем обязательные поля NOT NULL и добавляем внешние ключи
+    savepoint transaction_2;
+    -- Таблица званий: название звания обязательно
+    ALTER TABLE ranks
+    ALTER COLUMN rank SET NOT NULL;
+
+    -- Таблица устройств: название обязательно
+    ALTER TABLE devices
+    ALTER COLUMN name SET NOT NULL;
+
+    -- Таблица военнослужащих: личный номер и звание обязательны
+    -- Добавляем связь: военнослужащий - звание
+    ALTER TABLE soldiers
+    ALTER COLUMN personal_id SET NOT NULL,
+    ALTER COLUMN rank_id SET NOT NULL,
+    ADD CONSTRAINT fk_soldiers_ranks FOREIGN KEY (rank_id) REFERENCES ranks(id);
+
+    -- Таблица базовых единиц: название обязательно
+    ALTER TABLE base_unit_meas
+    ALTER COLUMN name SET NOT NULL;
+
+    -- Таблица всех единиц: название, базовая единица и коэффициент обязательны
+    -- Добавляем связь: единица измерения - базовая единица
+    ALTER TABLE unit_meas
+    ALTER COLUMN name SET NOT NULL,
+    ALTER COLUMN base_id SET NOT NULL,
+    ALTER COLUMN factor SET NOT NULL,
+    ADD CONSTRAINT fk_unit_meas_base_unit_meas FOREIGN KEY (base_id) REFERENCES base_unit_meas(id);
+
+    -- Таблица типов параметров: название обязательно
+    ALTER TABLE type_parameter
+    ALTER COLUMN name SET NOT NULL;
+
+    -- Таблица параметров: все поля обязательны
+    -- Добавляем связи: параметр - тип параметра, параметр - пачка, параметр - единица измерения
+    ALTER TABLE parameters
+    ALTER COLUMN type_par_id SET NOT NULL,
+    ALTER COLUMN batch_id SET NOT NULL,
+    ALTER COLUMN unit_meas_id SET NOT NULL,
+    ALTER COLUMN value SET NOT NULL,
+    ADD CONSTRAINT fk_parameter_type_parameter FOREIGN KEY (type_par_id) REFERENCES type_parameter(id),
+    ADD CONSTRAINT fk_parameter_batch_id FOREIGN KEY (batch_id) REFERENCES batch(id),
+    ADD CONSTRAINT fk_parameter_unit_meas FOREIGN KEY (unit_meas_id) REFERENCES unit_meas(id);
+
+    -- Таблица пачек: солдат, устройство и время измерения обязательны
+    -- Добавляем связи: пачка - военнослужащий, пачка - устройство
+    ALTER TABLE batch
+    ALTER COLUMN soldier_id SET NOT NULL,
+    ALTER COLUMN device_id SET NOT NULL,
+    ALTER COLUMN measured_at SET NOT NULL,
+    ADD CONSTRAINT fk_batch_soldiers FOREIGN KEY (soldier_id) REFERENCES soldiers(id),
+    ADD CONSTRAINT fk_batch_devices FOREIGN KEY (device_id) REFERENCES devices(id);
+
+    -- Таблица температурных поправок
+    ALTER TABLE temp_correction
+    ALTER COLUMN t0 SET NOT NULL,
+    ALTER COLUMN delta_tv SET NOT NULL;
+
+    -- Фиксируем третью транзакцию - связи созданы
+    release savepoint transaction_2;
+END
+$$;

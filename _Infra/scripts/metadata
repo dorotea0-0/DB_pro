@@ -1,0 +1,27 @@
+SELECT 
+    row_number() OVER(ORDER BY obj_type, obj_name) AS "№", 
+    obj_name, 
+    obj_type 
+FROM (
+    SELECT table_name AS obj_name, table_type AS obj_type
+    FROM information_schema.tables
+    WHERE table_catalog = current_database() AND
+          table_schema = 'public' AND
+          table_name LIKE 't1_%'
+    
+    UNION ALL
+    
+    SELECT sequence_name AS obj_name, 'SEQUENCE' AS obj_type
+    FROM information_schema.sequences
+    WHERE sequence_catalog = current_database() AND
+          sequence_schema = 'public' AND
+          sequence_name LIKE 'seq_t1_%'
+    
+    UNION ALL
+    
+    SELECT constraint_name AS obj_name, constraint_type AS obj_type
+    FROM information_schema.table_constraints
+    WHERE constraint_catalog = current_database() AND
+          constraint_schema = 'public' AND
+          table_name LIKE 't1_%'
+) t;
