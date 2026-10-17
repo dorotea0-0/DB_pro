@@ -59,24 +59,20 @@ begin
         return result;
     end;
     $func$
-    language plpgsql;
-    comment on function get_interpolation_points(numeric) is 'Возвращает две ближайшие точки из temp_correction для интерполяции';
+	create or replace function interpolate(x numeric, points interpolation_points)
+	returns numeric as
+	$func2$
+	begin
+    	-- Проверка деления на ноль: если обе точки имеют одинаковый x,
+    	-- интерполяция невозможна - возвращаем y0
+    	if points.x1 = points.x0 then
+        	return points.y0;
+    	end if;
 
-    -- Функция: линейная интерполяция
-    -- Принимает значение x и структуру точек, возвращает y
-    create or replace function interpolate(x numeric, points interpolation_points)
-    returns numeric as
-    $func2$
-    begin
-        -- Защита от деления на ноль
-        if points.x1 = points.x0 then
-            return points.y0;
-        end if;
-
-        return points.y0 + (points.y1 - points.y0) * (x - points.x0) / (points.x1 - points.x0);
-    end;
-    $func2$
-    language plpgsql;
+    	return points.y0 + (points.y1 - points.y0) * (x - points.x0) / (points.x1 - points.x0);
+	end;
+	$func2$
+	language plpgsql;
     comment on function interpolate(numeric, interpolation_points) is 'Линейная интерполяция по двум точкам';
 
 end
