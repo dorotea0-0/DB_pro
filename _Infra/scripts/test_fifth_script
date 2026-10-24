@@ -1,0 +1,114 @@
+do
+$test$
+declare
+    t numeric;          -- температура для проверки
+    pts interpolation_points;  -- точки интерполяции
+    delta numeric;      -- результат интерполяции
+    expected numeric;   -- ожидаемое значение
+    status text;        -- статус проверки
+begin
+    -- Создаём временную таблицу для вывода результатов
+    create temp table if not exists test_results (
+        t numeric,
+        x0 numeric, y0 numeric,
+        x1 numeric, y1 numeric,
+        delta numeric,
+        expected numeric,
+        status text
+    );
+
+    -- Очищаем таблицу перед тестами
+    truncate table test_results;
+
+    -- Тест 1: t = 0, ожидаем 0.5
+    t := 0;
+    pts := get_interpolation_points(t);
+    delta := interpolate(t, pts);
+    expected := 0.5;
+    if abs(delta - expected) < 0.001 then status := 'OK'; else status := 'FAIL'; end if;
+    insert into test_results values (t, pts.x0, pts.y0, pts.x1, pts.y1, delta, expected, status);
+
+    -- Тест 2: t = 10, ожидаем 1.0
+    t := 10;
+    pts := get_interpolation_points(t);
+    delta := interpolate(t, pts);
+    expected := 1.0;
+    if abs(delta - expected) < 0.001 then status := 'OK'; else status := 'FAIL'; end if;
+    insert into test_results values (t, pts.x0, pts.y0, pts.x1, pts.y1, delta, expected, status);
+
+    -- Тест 3: t = 25, ожидаем 2.0
+    t := 25;
+    pts := get_interpolation_points(t);
+    delta := interpolate(t, pts);
+    expected := 2.0;
+    if abs(delta - expected) < 0.001 then status := 'OK'; else status := 'FAIL'; end if;
+    insert into test_results values (t, pts.x0, pts.y0, pts.x1, pts.y1, delta, expected, status);
+
+    -- Тест 4: t = 40, ожидаем 4.5
+    t := 40;
+    pts := get_interpolation_points(t);
+    delta := interpolate(t, pts);
+    expected := 4.5;
+    if abs(delta - expected) < 0.001 then status := 'OK'; else status := 'FAIL'; end if;
+    insert into test_results values (t, pts.x0, pts.y0, pts.x1, pts.y1, delta, expected, status);
+
+    -- Тест 5: t = 7, ожидаем 0.7
+    t := 7;
+    pts := get_interpolation_points(t);
+    delta := interpolate(t, pts);
+    expected := 0.7;
+    if abs(delta - expected) < 0.001 then status := 'OK'; else status := 'FAIL'; end if;
+    insert into test_results values (t, pts.x0, pts.y0, pts.x1, pts.y1, delta, expected, status);
+
+    -- Тест 6: t = 12, ожидаем 1.0
+    t := 12;
+    pts := get_interpolation_points(t);
+    delta := interpolate(t, pts);
+    expected := 1.0;
+    if abs(delta - expected) < 0.001 then status := 'OK'; else status := 'FAIL'; end if;
+    insert into test_results values (t, pts.x0, pts.y0, pts.x1, pts.y1, delta, expected, status);
+
+    -- Тест 7: t = 22, ожидаем 1.7
+    t := 22;
+    pts := get_interpolation_points(t);
+    delta := interpolate(t, pts);
+    expected := 1.7;
+    if abs(delta - expected) < 0.001 then status := 'OK'; else status := 'FAIL'; end if;
+    insert into test_results values (t, pts.x0, pts.y0, pts.x1, pts.y1, delta, expected, status);
+
+    -- Тест 8: t = 35, ожидаем 4.0
+    t := 35;
+    pts := get_interpolation_points(t);
+    delta := interpolate(t, pts);
+    expected := 4.0;
+    if abs(delta - expected) < 0.001 then status := 'OK'; else status := 'FAIL'; end if;
+    insert into test_results values (t, pts.x0, pts.y0, pts.x1, pts.y1, delta, expected, status);
+
+    -- Тест 9: t = 17, ожидаем 1.2
+    t := 17;
+    pts := get_interpolation_points(t);
+    delta := interpolate(t, pts);
+    expected := 1.2;
+    if abs(delta - expected) < 0.001 then status := 'OK'; else status := 'FAIL'; end if;
+    insert into test_results values (t, pts.x0, pts.y0, pts.x1, pts.y1, delta, expected, status);
+
+    -- Тест 10: t = 28, ожидаем 2.9
+    t := 28;
+    pts := get_interpolation_points(t);
+    delta := interpolate(t, pts);
+    expected := 2.9;
+    if abs(delta - expected) < 0.001 then status := 'OK'; else status := 'FAIL'; end if;
+    insert into test_results values (t, pts.x0, pts.y0, pts.x1, pts.y1, delta, expected, status);
+
+end
+$test$;
+
+-- Вывод результатов всех тестов
+select * from test_results order by t;
+
+-- Сколько тестов прошло успешно
+select
+    count(*) as total,
+    count(*) filter (where status = 'OK') as passed,
+    count(*) filter (where status = 'FAIL') as failed
+from test_results;
