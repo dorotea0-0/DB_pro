@@ -15,7 +15,8 @@ begin
         y1 numeric
     );
     comment on type interpolation_points is 'Структура для линейной интерполяции ';
-
+end
+$do$;
     -- Функция: получение точек интерполяции по температуре
     -- Находит две ближайшие точки из таблицы temp_correction
     create or replace function get_interpolation_points(temp numeric)
@@ -59,6 +60,7 @@ begin
         return result;
     end;
     $func$
+	language plpgsql;
 	create or replace function interpolate(x numeric, points interpolation_points)
 	returns numeric as
 	$func2$
@@ -74,6 +76,3 @@ begin
 	$func2$
 	language plpgsql;
     comment on function interpolate(numeric, interpolation_points) is 'Линейная интерполяция по двум точкам';
-
-end
-$do$;
