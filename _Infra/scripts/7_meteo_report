@@ -1,0 +1,33 @@
+-- ============================================================================
+-- 007_meteo_report.sql
+-- Расчёт Метео приближённого (ДДЧМ, ВВВВ, БББТТ) для каждой пачки
+-- Использует: CTE, оконную функцию row_number()
+-- ============================================================================
+
+with meteo_data as (
+    -- Собираем все компоненты Метео для каждой пачки
+    select
+        b.id as batch_id,
+        b.soldier_id,
+        s.personal_id,
+        r.rank,
+        d.name as device_name,
+        get_meteo_ddchm(b.id) as ddchm,
+        get_meteo_vvvv(b.id) as vvvv,
+        get_meteo_bbbtt(b.id) as bbbtt
+    from batch b
+    join soldiers s on s.id = b.soldier_id
+    join ranks r on r.id = s.rank_id
+    join devices d on d.id = b.device_id
+)
+select
+    row_number() over(order by batch_id) as "№",
+    batch_id as "Пачка",
+    personal_id as "Личный номер",
+    rank as "Звание",
+    device_name as "Оборудование",
+    ddchm as "ДДЧМ (дата)",
+    vvvv as "ВВВВ (ветер)",
+    bbbtt as "БББТТ (температура)"
+from meteo_data
+order by batch_id;
