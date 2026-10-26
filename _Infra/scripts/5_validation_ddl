@@ -19,6 +19,33 @@ begin
     drop type if exists parameter_list cascade;
     drop table if exists parameter_constraints cascade;
     drop table if exists meteo_constants cascade;
+    drop table if exists error_messages cascade;
+
+	-- Добавляем таблицу текстов ошибок
+    create table error_messages (
+        error_code text primary key,
+        error_text text not null
+    );
+    comment on table error_messages is 'Справочник текстов ошибок валидации параметров';
+
+    insert into error_messages(error_code, error_text) values
+    ('HEIGHT_INTEGER',         'Высота: должно быть целое число'),
+    ('TEMP_REQUIRED',          'Температура: обязательный параметр'),
+    ('TEMP_RANGE',             'Температура: вне диапазона -58..58'),
+    ('TEMP_DECIMAL',           'Температура: допускается только 1 знак после запятой'),
+    ('PRESS_REQUIRED',         'Давление: обязательный параметр'),
+    ('PRESS_INTEGER',          'Давление: должно быть целое число'),
+    ('PRESS_RANGE',            'Давление: вне диапазона 500..900'),
+    ('WIND_DIR_REQUIRED',      'Направление ветра: обязательный параметр'),
+    ('WIND_DIR_INTEGER',       'Направление ветра: должно быть целое число'),
+    ('WIND_DIR_RANGE',         'Направление ветра: вне диапазона 0..59'),
+    ('WIND_SPEED_REQUIRED_DMK','Скорость ветра: обязательный параметр для ДМК'),
+    ('WIND_SPEED_INTEGER',     'Скорость ветра: должно быть целое число'),
+    ('WIND_SPEED_RANGE',       'Скорость ветра: вне диапазона 0..15'),
+    ('DRIFT_REQUIRED_VR',      'Дальность сноса пуль: обязательный параметр для ВР'),
+    ('DRIFT_INTEGER',          'Дальность сноса пуль: должно быть целое число'),
+    ('DRIFT_RANGE',            'Дальность сноса пуль: вне диапазона 0..150');
+
 
     -- Тип списка параметров для одной пачки измерений
     -- 6 полей соответствуют 6 типам параметров из type_parameter
@@ -107,58 +134,75 @@ declare
     v_wdir numeric := params.wind_dir;
     v_wspeed numeric := params.wind_speed;
     v_drift numeric := params.drift;
+	v_err text;
 begin
     -- Проверка высоты (целое число)
     if v_height is not null and v_height != floor(v_height) then
-        errors := errors || 'Высота: должно быть целое число; ';
-    end if;
+		select error_text into v_err from error_messages where error_code = 'HEIGHT_INTEGER';
+        errors := errors || v_err || '; '; 
+	end if;
 
     -- Проверка температуры (-58..58, 1 знак после запятой)
     if v_temp is null then
-        errors := errors || 'Температура: обязательный параметр; ';
+	    select error_text into v_err from error_messages where error_code = 'TEMP_REQUIRED';
+        errors := errors || v_err || '; ';
     elsif v_temp < -58 or v_temp > 58 then
-        errors := errors || 'Температура: вне диапазона -58..58; ';
-    elsif (v_temp * 10) != floor(v_temp * 10) then
-        errors := errors || 'Температура: допускается только 1 знак после запятой; ';
-    end if;
+        select error_text into v_err from error_messages where error_code = 'TEMP_RANGE';
+        errors := errors || v_err || '; ';
+	elsif (v_temp * 10) != floor(v_temp * 10) then
+        select error_text into v_err from error_messages where error_code = 'TEMP_DECIMAL';
+        errors := errors || v_err || '; ';
+	end if;
 
     -- Проверка давления (целое, 500..900)
     if v_press is null then
-        errors := errors || 'Давление: обязательный параметр; ';
-    elsif v_press != floor(v_press) then
-        errors := errors || 'Давление: должно быть целое число; ';
+		select error_text into v_err from error_messages where error_code = 'PRESS_REQUIRED';
+        errors := errors || v_err || '; ';
+	elsif v_press != floor(v_press) then
+		select error_text into v_err from error_messages where error_code = 'PRESS_INTEGER';
+        errors := errors || v_err || '; ';
     elsif v_press < 500 or v_press > 900 then
-        errors := errors || 'Давление: вне диапазона 500..900; ';
-    end if;
+        select error_text into v_err from error_messages where error_code = 'PRESS_RANGE';
+        errors := errors || v_err || '; ';
+	end if;
 
     -- Проверка направления ветра (целое, 0..59)
     if v_wdir is null then
-        errors := errors || 'Направление ветра: обязательный параметр; ';
-    elsif v_wdir != floor(v_wdir) then
-        errors := errors || 'Направление ветра: должно быть целое число; ';
-    elsif v_wdir < 0 or v_wdir > 59 then
-        errors := errors || 'Направление ветра: вне диапазона 0..59; ';
-    end if;
+        select error_text into v_err from error_messages where error_code = 'WIND_DIR_REQUIRED';
+        errors := errors || v_err || '; ';
+	elsif v_wdir != floor(v_wdir) then
+        select error_text into v_err from error_messages where error_code = 'WIND_DIR_INTEGER';
+        errors := errors || v_err || '; ';
+	elsif v_wdir < 0 or v_wdir > 59 then
+        select error_text into v_err from error_messages where error_code = 'WIND_DIR_RANGE';
+        errors := errors || v_err || '; ';
+end if;
 
     -- Для ДМК (device_id=1) проверяем скорость ветра
     if p_device_id = 1 then
         if v_wspeed is null then
-            errors := errors || 'Скорость ветра: обязательный параметр для ДМК; ';
+            select error_text into v_err from error_messages where error_code = 'WIND_SPEED_REQUIRED_DMK';
+            errors := errors || v_err || '; ';
         elsif v_wspeed != floor(v_wspeed) then
-            errors := errors || 'Скорость ветра: должно быть целое число; ';
+            select error_text into v_err from error_messages where error_code = 'WIND_SPEED_INTEGER';
+            errors := errors || v_err || '; ';
         elsif v_wspeed < 0 or v_wspeed > 15 then
-            errors := errors || 'Скорость ветра: вне диапазона 0..15; ';
+            select error_text into v_err from error_messages where error_code = 'WIND_SPEED_RANGE';
+            errors := errors || v_err || '; ';
         end if;
     end if;
 
     -- Для ВР (device_id=2) проверяем дальность сноса пуль
     if p_device_id = 2 then
         if v_drift is null then
-            errors := errors || 'Дальность сноса пуль: обязательный параметр для ВР; ';
+            select error_text into v_err from error_messages where error_code = 'DRIFT_REQUIRED_VR';
+            errors := errors || v_err || '; ';
         elsif v_drift != floor(v_drift) then
-            errors := errors || 'Дальность сноса пуль: должно быть целое число; ';
+            select error_text into v_err from error_messages where error_code = 'DRIFT_INTEGER';
+            errors := errors || v_err || '; ';
         elsif v_drift < 0 or v_drift > 150 then
-            errors := errors || 'Дальность сноса пуль: вне диапазона 0..150; ';
+            select error_text into v_err from error_messages where error_code = 'DRIFT_RANGE';
+            errors := errors || v_err || '; ';
         end if;
     end if;
 
@@ -167,30 +211,6 @@ end;
 $func_validate$
 language plpgsql;
 comment on function validate_parameters(parameter_list, int) is 'Проверяет корректность параметров и возвращает строку с ошибками';
-
--- Функция получения списка параметров для пачки (pivot)
-create or replace function get_batch_params(p_batch_id int)
-returns parameter_list as
-$func_get_params$
-declare
-    result parameter_list;
-begin
-    select
-        max(case when type_par_id = 1 then value end),
-        max(case when type_par_id = 2 then value end),
-        max(case when type_par_id = 3 then value end),
-        max(case when type_par_id = 4 then value end),
-        max(case when type_par_id = 5 then value end),
-        max(case when type_par_id = 6 then value end)
-    into result
-    from parameters
-    where batch_id = p_batch_id;
-
-    return result;
-end;
-$func_get_params$
-language plpgsql;
-comment on function get_batch_params(int) is 'Преобразует вертикальные параметры пачки в горизонтальный тип parameter_list';
 
 -- ДДЧМ: дата измерения в формате ДДЧЧММ (день, час, месяц)
 create or replace function get_meteo_ddchm(p_batch_id int)
