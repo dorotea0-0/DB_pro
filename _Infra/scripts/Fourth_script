@@ -133,7 +133,11 @@ BEGIN
     COMMENT ON COLUMN temp_correction.delta_tv IS 'Виртуальная поправка';
 
     -- Фиксируем первую транзакцию - структура создана
-    savepoint transaction_1;
+end
+$$;
+do
+$$
+begin
 	-- 1. Заполняем справочник званий
     -- Берём только сухопутные звания от рядового до полковника
     INSERT INTO ranks(rank) VALUES
@@ -441,10 +445,13 @@ BEGIN
     (40, 4.5);
 
     -- Фиксируем вторую транзакцию - данные загружены
-	release savepoint transaction_1;
-
+end
+$$;
+do
+$$
+begin
     -- Делаем обязательные поля NOT NULL и добавляем внешние ключи
-    savepoint transaction_2;
+
     -- Таблица званий: название звания обязательно
     ALTER TABLE ranks
     ALTER COLUMN rank SET NOT NULL;
@@ -502,6 +509,5 @@ BEGIN
     ALTER COLUMN delta_tv SET NOT NULL;
 
     -- Фиксируем третью транзакцию - связи созданы
-    release savepoint transaction_2;
-END
+END;
 $$;

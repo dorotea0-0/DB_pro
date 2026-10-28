@@ -1,0 +1,286 @@
+-- ============================================================================
+-- 005_validation_ddl.sql
+-- DDL для валидации параметров, констант и функций Метео приближённого
+-- Запускать ПОСЛЕ 001_plpgsql_schema.sql и 003_interpolation_ddl.sql
+-- ============================================================================
+
+-- =========================================================
+-- ЧАСТЬ 1: DO-блок — создаёт типы и таблицы
+-- =========================================================
+do
+$do$
+begin
+    -- Удаляем старые объекты (в обратном порядке зависимостей)
+    drop function if exists get_meteo_bbbtt(int) cascade;
+    drop function if exists get_meteo_vvvv(int) cascade;
+    drop function if exists get_meteo_ddchm(int) cascade;
+    drop function if exists get_batch_params(int) cascade;
+    drop function if exists validate_parameters(parameter_list, int) cascade;
+    drop type if exists parameter_list cascade;
+    drop table if exists parameter_constraints cascade;
+    drop table if exists meteo_constants cascade;
+    drop table if exists error_messages cascade;
+
+	-- Добавляем таблицу текстов ошибок
+    create table error_messages (
+        error_code text primary key,
+        error_text text not null
+    );
+    comment on table error_messages is 'Справочник текстов ошибок валидации параметров';
+
+    insert into error_messages(error_code, error_text) values
+    ('HEIGHT_INTEGER',         'Высота: должно быть целое число'),
+    ('TEMP_REQUIRED',          'Температура: обязательный параметр'),
+    ('TEMP_RANGE',             'Температура: вне диапазона -58..58'),
+    ('TEMP_DECIMAL',           'Температура: допускается только 1 знак после запятой'),
+    ('PRESS_REQUIRED',         'Давление: обязательный параметр'),
+    ('PRESS_INTEGER',          'Давление: должно быть целое число'),
+    ('PRESS_RANGE',            'Давление: вне диапазона 500..900'),
+    ('WIND_DIR_REQUIRED',      'Направление ветра: обязательный параметр'),
+    ('WIND_DIR_INTEGER',       'Направление ветра: должно быть целое число'),
+    ('WIND_DIR_RANGE',         'Направление ветра: вне диапазона 0..59'),
+    ('WIND_SPEED_REQUIRED_DMK','Скорость ветра: обязательный параметр для ДМК'),
+    ('WIND_SPEED_INTEGER',     'Скорость ветра: должно быть целое число'),
+    ('WIND_SPEED_RANGE',       'Скорость ветра: вне диапазона 0..15'),
+    ('DRIFT_REQUIRED_VR',      'Дальность сноса пуль: обязательный параметр для ВР'),
+    ('DRIFT_INTEGER',          'Дальность сноса пуль: должно быть целое число'),
+    ('DRIFT_RANGE',            'Дальность сноса пуль: вне диапазона 0..150');
+
+
+    -- Тип списка параметров для одной пачки измерений
+    -- 6 полей соответствуют 6 типам параметров из type_parameter
+    create type parameter_list as (
+        height numeric,       -- Высота метеопоста (type_par_id=1)
+        temperature numeric,  -- Температура (type_par_id=2)
+        pressure numeric,     -- Давление (type_par_id=3)
+        wind_dir numeric,     -- Направление ветра (type_par_id=4)
+        wind_speed numeric,   -- Скорость ветра (type_par_id=5)
+        drift numeric         -- Дальность сноса пуль (type_par_id=6)
+    );
+    comment on type parameter_list is 'Список параметров для одной пачки измерений';
+
+    -- Таблица правил валидации параметров
+    -- Хранит допустимые диапазоны и требования для каждого типа устройства
+    create table parameter_constraints (
+        id int primary key,
+        type_par_id int not null,
+        device_id int not null,
+        param_name text not null,
+        min_value numeric,
+        max_value numeric,
+        is_integer boolean not null default true,
+        is_required boolean not null default true,
+        description text
+    );
+    comment on table parameter_constraints is 'Правила валидации параметров по типам устройств';
+
+    -- ДМК (device_id=1): параметры 1,2,3,4,5
+    insert into parameter_constraints(id, type_par_id, device_id, param_name, min_value, max_value, is_integer, is_required, description) values
+    (1, 1, 1, 'Высота метеопоста',   null,    null, true,  true,  'Целое число, может быть отрицательным'),
+    (2, 2, 1, 'Температура',         -58,     58,   false, true,  'Дробное с 1 знаком, диапазон -58..58'),
+    (3, 3, 1, 'Давление',            500,     900,  true,  true,  'Целое положительное, 500..900 мм рт.ст.'),
+    (4, 4, 1, 'Направление ветра',   0,       59,   true,  true,  'Целое, 0..59 БДУ'),
+    (5, 5, 1, 'Скорость ветра',      0,       15,   true,  true,  'Целое >=0, 0..15 м/с');
+
+    -- ВР (device_id=2): параметры 1,2,3,4,6 (вместо скорости ветра — дальность сноса)
+    insert into parameter_constraints(id, type_par_id, device_id, param_name, min_value, max_value, is_integer, is_required, description) values
+    (6, 1, 2, 'Высота метеопоста',   null,    null, true,  true,  'Целое число, может быть отрицательным'),
+    (7, 2, 2, 'Температура',         -58,     58,   false, true,  'Дробное с 1 знаком, диапазон -58..58'),
+    (8, 3, 2, 'Давление',            500,     900,  true,  true,  'Целое положительное, 500..900 мм рт.ст.'),
+    (9, 4, 2, 'Направление ветра',   0,       59,   true,  true,  'Целое, 0..59 БДУ'),
+    (10, 6, 2, 'Дальность сноса пуль', 0,    150,  true,  true,  'Целое >=0, 0..150 м');
+
+    -- Таблица метео-констант
+    -- Хранит значения по умолчанию и коэффициенты для расчётов
+    create table meteo_constants (
+        id int primary key,
+        const_name text not null,
+        const_value numeric not null,
+        description text
+    );
+    comment on table meteo_constants is 'Константы для расчёта Метео приближённого';
+
+    insert into meteo_constants(id, const_name, const_value, description) values
+    (1, 'DEFAULT_HEIGHT',       110,   'Высота метеопоста по умолчанию, м'),
+    (2, 'DEFAULT_TEMPERATURE',  12,    'Температура по умолчанию, °C'),
+    (3, 'DEFAULT_PRESSURE',     745,   'Давление по умолчанию, мм рт.ст.'),
+    (4, 'DEFAULT_WIND_DIR',     5,     'Направление ветра по умолчанию, БДУ'),
+    (5, 'DEFAULT_WIND_SPEED',   2,     'Скорость ветра по умолчанию, м/с'),
+    (6, 'DEFAULT_DRIFT',        5,     'Дальность сноса пуль по умолчанию, м'),
+    (7, 'WIND_DIR_SCALE',       6,     'Масштаб направления ветра (360°/60 БДУ)'),
+    (8, 'TEMP_CORRECTION_STEP', 5,     'Шаг таблицы температурных поправок, °C');
+
+end
+$do$;
+
+-- =========================================================
+-- ЧАСТЬ 2: Функции (создаются ОТДЕЛЬНО, вне DO-блока)
+-- =========================================================
+
+-- Функция проверки корректности параметров
+-- На вход: список параметров + id устройства
+-- На выходе: строка с описанием ошибок (пустая строка = всё OK)
+create or replace function validate_parameters(
+    params parameter_list,
+    p_device_id int
+)
+returns text as
+$func_validate$
+declare
+    errors text := '';
+    v_height numeric := params.height;
+    v_temp numeric := params.temperature;
+    v_press numeric := params.pressure;
+    v_wdir numeric := params.wind_dir;
+    v_wspeed numeric := params.wind_speed;
+    v_drift numeric := params.drift;
+	v_err text;
+begin
+    -- Проверка высоты (целое число)
+    if v_height is not null and v_height != floor(v_height) then
+		select error_text into v_err from error_messages where error_code = 'HEIGHT_INTEGER';
+        errors := errors || v_err || '; '; 
+	end if;
+
+    -- Проверка температуры (-58..58, 1 знак после запятой)
+    if v_temp is null then
+	    select error_text into v_err from error_messages where error_code = 'TEMP_REQUIRED';
+        errors := errors || v_err || '; ';
+    elsif v_temp < -58 or v_temp > 58 then
+        select error_text into v_err from error_messages where error_code = 'TEMP_RANGE';
+        errors := errors || v_err || '; ';
+	elsif (v_temp * 10) != floor(v_temp * 10) then
+        select error_text into v_err from error_messages where error_code = 'TEMP_DECIMAL';
+        errors := errors || v_err || '; ';
+	end if;
+
+    -- Проверка давления (целое, 500..900)
+    if v_press is null then
+		select error_text into v_err from error_messages where error_code = 'PRESS_REQUIRED';
+        errors := errors || v_err || '; ';
+	elsif v_press != floor(v_press) then
+		select error_text into v_err from error_messages where error_code = 'PRESS_INTEGER';
+        errors := errors || v_err || '; ';
+    elsif v_press < 500 or v_press > 900 then
+        select error_text into v_err from error_messages where error_code = 'PRESS_RANGE';
+        errors := errors || v_err || '; ';
+	end if;
+
+    -- Проверка направления ветра (целое, 0..59)
+    if v_wdir is null then
+        select error_text into v_err from error_messages where error_code = 'WIND_DIR_REQUIRED';
+        errors := errors || v_err || '; ';
+	elsif v_wdir != floor(v_wdir) then
+        select error_text into v_err from error_messages where error_code = 'WIND_DIR_INTEGER';
+        errors := errors || v_err || '; ';
+	elsif v_wdir < 0 or v_wdir > 59 then
+        select error_text into v_err from error_messages where error_code = 'WIND_DIR_RANGE';
+        errors := errors || v_err || '; ';
+end if;
+
+    -- Для ДМК (device_id=1) проверяем скорость ветра
+    if p_device_id = 1 then
+        if v_wspeed is null then
+            select error_text into v_err from error_messages where error_code = 'WIND_SPEED_REQUIRED_DMK';
+            errors := errors || v_err || '; ';
+        elsif v_wspeed != floor(v_wspeed) then
+            select error_text into v_err from error_messages where error_code = 'WIND_SPEED_INTEGER';
+            errors := errors || v_err || '; ';
+        elsif v_wspeed < 0 or v_wspeed > 15 then
+            select error_text into v_err from error_messages where error_code = 'WIND_SPEED_RANGE';
+            errors := errors || v_err || '; ';
+        end if;
+    end if;
+
+    -- Для ВР (device_id=2) проверяем дальность сноса пуль
+    if p_device_id = 2 then
+        if v_drift is null then
+            select error_text into v_err from error_messages where error_code = 'DRIFT_REQUIRED_VR';
+            errors := errors || v_err || '; ';
+        elsif v_drift != floor(v_drift) then
+            select error_text into v_err from error_messages where error_code = 'DRIFT_INTEGER';
+            errors := errors || v_err || '; ';
+        elsif v_drift < 0 or v_drift > 150 then
+            select error_text into v_err from error_messages where error_code = 'DRIFT_RANGE';
+            errors := errors || v_err || '; ';
+        end if;
+    end if;
+
+    return errors;
+end;
+$func_validate$
+language plpgsql;
+comment on function validate_parameters(parameter_list, int) is 'Проверяет корректность параметров и возвращает строку с ошибками';
+
+-- ДДЧМ: дата измерения в формате ДДЧЧММ (день, час, месяц)
+create or replace function get_meteo_ddchm(p_batch_id int)
+returns text as
+$func_ddchm$
+declare
+    v_measured_at timestamptz;
+begin
+    select measured_at into v_measured_at from batch where id = p_batch_id;
+    if v_measured_at is null then
+        return '000000';
+    end if;
+    return lpad(extract(day from v_measured_at)::text, 2, '0')
+        || lpad(extract(hour from v_measured_at)::text, 2, '0')
+        || lpad(extract(month from v_measured_at)::text, 2, '0');
+end;
+$func_ddchm$
+language plpgsql;
+comment on function get_meteo_ddchm(int) is 'Метео ДДЧМ: день+час+месяц измерения';
+
+-- ВВВВ: ветер в формате ДДСС (направление + скорость)
+create or replace function get_meteo_vvvv(p_batch_id int)
+returns text as
+$func_vvvv$
+declare
+    v_wdir numeric;
+    v_wspeed numeric;
+begin
+    select
+        max(case when type_par_id = 4 then value end),
+        max(case when type_par_id = 5 then value end)
+    into v_wdir, v_wspeed
+    from parameters
+    where batch_id = p_batch_id;
+
+    if v_wdir is null or v_wspeed is null then
+        return '0000';
+    end if;
+
+    return lpad(floor(v_wdir)::text, 2, '0')
+        || lpad(floor(v_wspeed)::text, 2, '0');
+end;
+$func_vvvv$
+language plpgsql;
+comment on function get_meteo_vvvv(int) is 'Метео ВВВВ: направление+скорость ветра';
+
+-- БББТТ: температура с поправкой (3 знака температура + 2 знака поправка*10)
+create or replace function get_meteo_bbbtt(p_batch_id int)
+returns text as
+$func_bbbtt$
+declare
+    v_temp numeric;
+    v_delta numeric;
+    pts interpolation_points;
+begin
+    select value into v_temp
+    from parameters
+    where batch_id = p_batch_id and type_par_id = 2;
+
+    if v_temp is null then
+        return '00000';
+    end if;
+
+    -- Получаем поправку через интерполяцию из temp_correction
+    pts := get_interpolation_points(v_temp);
+    v_delta := interpolate(v_temp, pts);
+
+    return lpad(floor(v_temp)::text, 3, '0')
+        || lpad(floor(v_delta * 10)::text, 2, '0');
+end;
+$func_bbbtt$
+language plpgsql;
+comment on function get_meteo_bbbtt(int) is 'Метео БББТТ: температура с поправкой';

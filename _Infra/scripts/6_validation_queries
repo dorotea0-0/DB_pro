@@ -1,0 +1,106 @@
+-- ============================================================================
+-- 006_validation_queries.sql
+-- Запросы: "Список параметров с ошибками" и "Лучший стрелок"
+-- Все запросы используют CTE, оконные функции, проекции, группировки
+-- ============================================================================
+
+-- =========================================================
+-- ЗАПРОС 1: "Список параметров с ошибками"
+-- Использует: CTE, проекцию (pivot), оконную функцию row_number()
+-- =========================================================
+with batch_params as (
+    -- Проецируем вертикальные параметры в горизонтальный вид (pivot)
+    select
+        b.id as batch_id,
+        b.device_id,
+        d.name as device_name,
+        max(case when p.type_par_id = 1 then p.value end) as height,
+        max(case when p.type_par_id = 2 then p.value end) as temperature,
+        max(case when p.type_par_id = 3 then p.value end) as pressure,
+        max(case when p.type_par_id = 4 then p.value end) as wind_dir,
+        max(case when p.type_par_id = 5 then p.value end) as wind_speed,
+        max(case when p.type_par_id = 6 then p.value end) as drift
+    from batch b
+    join devices d on d.id = b.device_id
+    join parameters p on p.batch_id = b.id
+    group by b.id, b.device_id, d.name
+),
+validated as (
+    -- Применяем функцию валидации к каждой пачке
+    select
+        bp.*,
+        validate_parameters(
+            (bp.height, bp.temperature, bp.pressure, bp.wind_dir, bp.wind_speed, bp.drift)::parameter_list,
+            bp.device_id
+        ) as error_text
+    from batch_params bp
+)
+select
+    row_number() over(order by batch_id) as "№",
+    device_name as "Тип оборудования",
+    height as "Высота метеопоста",
+    temperature as "Температура",
+    pressure as "Давление",
+    wind_dir as "Направление ветра",
+    wind_speed as "Скорость ветра",
+    drift as "Дальность сноса пуль",
+    case when error_text = '' then false else true end as "Флаг: Есть ошибка",
+    case when error_text = '' then 'Нет ошибок' else error_text end as "Описание ошибки"
+from validated
+order by batch_id;
+
+-- =========================================================
+-- ЗАПРОС 2: "Лучший стрелок"
+-- Список пользователей и количество допущенных ошибок
+-- Использует: CTE, группировку, оконную функцию, фильтрацию
+-- =========================================================
+with batch_errors as (
+    -- Считаем ошибки для каждой пачки
+    select
+        b.id as batch_id,
+        b.soldier_id,
+        s.personal_id,
+        r.rank,
+        validate_parameters(
+            (
+                max(case when p.type_par_id = 1 then p.value end),
+                max(case when p.type_par_id = 2 then p.value end),
+                max(case when p.type_par_id = 3 then p.value end),
+                max(case when p.type_par_id = 4 then p.value end),
+                max(case when p.type_par_id = 5 then p.value end),
+                max(case when p.type_par_id = 6 then p.value end)
+            )::parameter_list,
+            b.device_id
+        ) as error_text
+    from batch b
+    join soldiers s on s.id = b.soldier_id
+    join ranks r on r.id = s.rank_id
+    join parameters p on p.batch_id = b.id
+    group by b.id, b.soldier_id, s.personal_id, r.rank, b.device_id
+),
+soldier_stats as (
+    -- Группируем по солдатам и считаем статистику ошибок
+    select
+        personal_id,
+        rank,
+        count(*) as total_batches,
+        count(*) filter (where error_text != '') as error_batches,
+        sum(case when error_text != '' then 1 else 0 end) as total_errors
+    from batch_errors
+    group by personal_id, rank
+)
+select
+    row_number() over(order by total_errors asc, personal_id) as "№",
+    personal_id as "Личный номер",
+    rank as "Звание",
+    total_batches as "Всего пачек",
+    error_batches as "Пачек с ошибками",
+    total_errors as "Количество ошибок",
+    case
+        when total_errors = 0 then 'Отлично'
+        when total_errors <= 2 then 'Хорошо'
+        when total_errors <= 5 then 'Удовлетворительно'
+        else 'Неудовлетворительно'
+    end as "Оценка"
+from soldier_stats
+order by total_errors asc, personal_id;
