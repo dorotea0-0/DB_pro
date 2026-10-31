@@ -1,0 +1,82 @@
+
+do
+$do$
+begin
+    -- Удаляем старые объекты
+    drop table if exists correction_factors cascade;
+    drop table if exists device_specs cascade;
+
+    -- Технические характеристики устройств
+    -- Хранит диапазоны измерений, точность и единицы для каждого
+    -- параметра каждого устройства (ВР и ДМК)
+    create table device_specs (
+        id int primary key,
+        device_id int not null references devices(id),
+        type_par_id int not null references type_parameter(id),
+        min_value numeric,
+        max_value numeric,
+        accuracy numeric,
+        unit_meas_id int references unit_meas(id),
+        description text
+    );
+    comment on table device_specs is 'Таблица 2: Технические характеристики устройств ВР и ДМК';
+    comment on column device_specs.device_id is 'Устройство (1=ДМК, 2=ВР)';
+    comment on column device_specs.type_par_id is 'Тип измеряемого параметра';
+    comment on column device_specs.min_value is 'Минимальное значение диапазона';
+    comment on column device_specs.max_value is 'Максимальное значение диапазона';
+    comment on column device_specs.accuracy is 'Точность измерения';
+    comment on column device_specs.unit_meas_id is 'Единица измерения';
+    comment on column device_specs.description is 'Описание характеристики';
+
+    -- ДМК (device_id=1): параметры 1,2,3,4,5
+    insert into device_specs(id, device_id, type_par_id, min_value, max_value, accuracy, unit_meas_id, description) values
+    (1, 1, 1, -100, 500, 1, 1, 'Высота метеопоста: диапазон -100..500 м, точность 1 м'),
+    (2, 1, 2, -58, 58, 0.1, 2, 'Температура: диапазон -58..58 °C, точность 0.1 °C'),
+    (3, 1, 3, 500, 900, 1, 3, 'Давление: диапазон 500..900 мм рт.ст., точность 1 мм рт.ст.'),
+    (4, 1, 4, 0, 59, 1, 4, 'Направление ветра: 0..59 БДУ, точность 1 БДУ'),
+    (5, 1, 5, 0, 15, 1, 5, 'Скорость ветра: 0..15 м/с, точность 1 м/с');
+
+    -- ВР (device_id=2): параметры 1,2,3,4,6
+    insert into device_specs(id, device_id, type_par_id, min_value, max_value, accuracy, unit_meas_id, description) values
+    (6, 2, 1, -100, 500, 1, 1, 'Высота метеопоста: диапазон -100..500 м, точность 1 м'),
+    (7, 2, 2, -58, 58, 0.1, 2, 'Температура: диапазон -58..58 °C, точность 0.1 °C'),
+    (8, 2, 3, 500, 900, 1, 3, 'Давление: диапазон 500..900 мм рт.ст., точность 1 мм рт.ст.'),
+    (9, 2, 4, 0, 59, 1, 4, 'Направление ветра: 0..59 БДУ, точность 1 БДУ'),
+    (10, 2, 6, 0, 150, 1, 1, 'Дальность сноса пуль: 0..150 м, точность 1 м');
+
+    -- Коэффициенты поправок для расчёта
+    -- Хранит поправочные коэффициенты для каждого устройства
+    -- и типа параметра (температурные, баллистические и т.д.)
+    create table correction_factors (
+        id int primary key,
+        device_id int not null references devices(id),
+        type_par_id int not null references type_parameter(id),
+        factor_name text not null,
+        factor_value numeric not null,
+        formula text,
+        description text
+    );
+    comment on table correction_factors is 'Таблица 3: Коэффициенты поправок для расчёта ВР и ДМК';
+    comment on column correction_factors.device_id is 'Устройство (1=ДМК, 2=ВР)';
+    comment on column correction_factors.type_par_id is 'Тип параметра';
+    comment on column correction_factors.factor_name is 'Название поправки';
+    comment on column correction_factors.factor_value is 'Значение коэффициента';
+    comment on column correction_factors.formula is 'Формула применения';
+    comment on column correction_factors.description is 'Описание поправки';
+
+    -- Поправки для ДМК (device_id=1)
+    insert into correction_factors(id, device_id, type_par_id, factor_name, factor_value, formula, description) values
+    (1, 1, 2, 'TEMP_ALTITUDE', -0.0065, 'T_corr = T_meas + factor * altitude', 'Температурный градиент высоты, °C/м'),
+    (2, 1, 3, 'PRESS_ALTITUDE', -0.12, 'P_corr = P_meas + factor * altitude', 'Барометрический градиент, мм рт.ст./м'),
+    (3, 1, 5, 'WIND_GUST', 1.5, 'V_max = V_meas * factor', 'Коэффициент порывов ветра'),
+    (4, 1, 1, 'ALTITUDE_REF', 0, 'H_corr = H_meas - factor', 'Высота приведения к уровню моря, м');
+
+    -- Поправки для ВР (device_id=2)
+    insert into correction_factors(id, device_id, type_par_id, factor_name, factor_value, formula, description) values
+    (5, 2, 2, 'TEMP_ALTITUDE', -0.0065, 'T_corr = T_meas + factor * altitude', 'Температурный градиент высоты, °C/м'),
+    (6, 2, 3, 'PRESS_ALTITUDE', -0.12, 'P_corr = P_meas + factor * altitude', 'Барометрический градиент, мм рт.ст./м'),
+    (7, 2, 6, 'DRIFT_WIND', 0.8, 'Drift = V_wind * factor * time', 'Коэффициент сноса пуль от ветра'),
+    (8, 2, 6, 'DRIFT_TEMP', 0.05, 'Drift_corr = Drift * (1 + factor * T)', 'Температурная поправка сноса');
+
+end
+$do$;
