@@ -1,7 +1,7 @@
 -- Удаляем старые объекты
 DROP FUNCTION IF EXISTS fn_calc_meteo_corrections(parameter_list, int) CASCADE;
 DROP FUNCTION IF EXISTS fn_calc_interpolation_from_array(numeric, int[], int[]) CASCADE;
-
+DROP FUNCTION IF EXISTS fn_format_bulletin_header(int, int, numeric, numeric) CASCADE;
 
 -- Вспомогательная функция: Линейная интерполяция по массиву заголовков и значений
 CREATE OR REPLACE FUNCTION fn_calc_interpolation_from_array(
@@ -61,6 +61,53 @@ LANGUAGE plpgsql;
 COMMENT ON FUNCTION fn_calc_interpolation_from_array(numeric, int[], int[]) 
 IS 'Линейная интерполяция по массиву заголовков и значений';
 
+-- Функция форматирования заголовка бюллетеня
+CREATE OR REPLACE FUNCTION fn_format_bulletin_header(
+    p_height int,
+    p_pressure int,
+    p_temp numeric,
+    p_delta_tv numeric
+)
+RETURNS text AS $$
+DECLARE
+    v_ddchm text;
+    v_vvvv text;
+    v_bbb text;
+    v_tt text;
+    v_delta_h0 int;
+    v_t0 numeric;
+    v_delta_t0 int;
+BEGIN
+    v_t0 := p_temp + p_delta_tv;
+    v_delta_h0 := p_pressure - 750;
+    v_delta_t0 := round(v_t0 - 15.9)::int;
+    
+    v_ddchm := lpad(extract(day from now())::text, 2, '0') ||
+               lpad(extract(hour from now())::text, 2, '0') ||
+               lpad(floor(extract(minute from now()) / 10)::text, 1, '0');
+    
+    v_vvvv := lpad(p_height::text, 4, '0');
+    
+    IF v_delta_h0 >= 0 THEN
+        v_bbb := lpad(v_delta_h0::text, 3, '0');
+    ELSE
+        v_bbb := '5' || lpad(abs(v_delta_h0)::text, 2, '0');
+    END IF;
+    
+    IF v_delta_t0 >= 0 THEN
+        v_tt := lpad(v_delta_t0::text, 2, '0');
+    ELSE
+        v_tt := '5' || lpad(abs(v_delta_t0)::text, 1, '0');
+    END IF;
+    
+    RETURN v_ddchm || v_vvvv || v_bbb || v_tt;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION fn_format_bulletin_header(int, int, numeric, numeric) 
+IS 'Форматирование заголовка метеобюллетеня (ДДЧЧМВВВВБББТТ)';
+
+
 -- Основная процедура расчета поправок
 CREATE OR REPLACE FUNCTION fn_calc_meteo_corrections(
     params parameter_list,
@@ -84,36 +131,41 @@ DECLARE
     v_headers int[];
     v_wind_value numeric;
 	v_current_type_id int;
+	v_delta_t0 int;
+    v_t0 numeric;
+    v_delta_tv numeric;
+    v_tens int;
+    v_units int;
+    v_tens_value numeric;
+    v_units_value numeric;
 BEGIN
     -- Определяем типы таблиц по описанию
     SELECT id INTO v_type_t2_pos 
     FROM calc_correction_types 
-    WHERE description = 'Таблица 2: Положительные отклонения температуры';
+    WHERE description LIKE '%Положительные%температур%';
     
     SELECT id INTO v_type_t2_neg 
     FROM calc_correction_types 
-    WHERE description = 'Таблица 2: Отрицательные отклонения температуры';
+    WHERE description LIKE '%Отрицательные%температур%';
+
+	-- Ветровые поправки
+	SELECT cct.id INTO v_type_t3_wind 
+    FROM calc_correction_types cct
+    JOIN calc_correction_types parent ON cct.parent_id = parent.id
+    WHERE parent.description LIKE '%Скорость среднего ветра%' 
+      AND cct.measurment_equipment_id = p_device_id;
     
-    IF p_device_id = 1 THEN -- ДМК
-        SELECT id INTO v_type_t3_wind 
-        FROM calc_correction_types 
-        WHERE description = 'Таблица 3: Скорость среднего ветра (ДМК)';
-        
-        SELECT id INTO v_type_t3_dir 
-        FROM calc_correction_types 
-        WHERE description = 'Таблица 3: Направление среднего ветра (ДМК)';
-        
-        v_wind_value := params.wind_speed;
-    ELSIF p_device_id = 2 THEN -- ВР
-        SELECT id INTO v_type_t3_wind 
-        FROM calc_correction_types 
-        WHERE description = 'Таблица 3: Скорость среднего ветра (ВР)';
-        
-        SELECT id INTO v_type_t3_dir 
-        FROM calc_correction_types 
-        WHERE description = 'Таблица 3: Направление среднего ветра (ВР)';
-        
-        v_wind_value := params.drift;
+    SELECT cct.id INTO v_type_t3_dir 
+    FROM calc_correction_types cct
+    JOIN calc_correction_types parent ON cct.parent_id = parent.id
+    WHERE parent.description LIKE '%Направление среднего ветра%' 
+      AND cct.measurment_equipment_id = p_device_id;
+	  
+    -- Определяем значение ветра в зависимости от оборудования
+    IF p_device_id = 1 THEN
+        v_wind_value := params.wind_speed;  -- ДМК: скорость ветра
+    ELSIF p_device_id = 2 THEN
+        v_wind_value := params.drift;       -- ВР: дальность сноса
     ELSE
         RAISE EXCEPTION 'Неизвестный тип оборудования: %. Допустимые значения: 1 (ДМК), 2 (ВР)', p_device_id;
     END IF;
@@ -124,8 +176,13 @@ BEGIN
         FROM calc_correction_heights h 
         ORDER BY h.height
     LOOP
-        -- Температура 
-        IF params.temperature >= 0 THEN
+		--виртуальная поправка из таблицы 1
+		SELECT fn_calc_temperature_interpolation(params.temperature) INTO v_delta_tv;
+	    --виртуальная температура и отклонение
+		v_t0 := params.temperature + v_delta_tv;
+        v_delta_t0 := round(v_t0 - 15.9)::int;
+        -- Определяем, какую таблицу использовать 
+        IF v_delta_t0 >= 0 THEN
             SELECT row_values INTO v_row_values
             FROM calc_correction
             WHERE height_id = v_height_id AND type_id = v_type_t2_pos;
@@ -143,8 +200,24 @@ BEGIN
         WHERE type_id = v_current_type_id;
         
         IF v_row_values IS NOT NULL AND v_headers IS NOT NULL THEN
-            temp_correction := fn_calc_interpolation_from_array(params.temperature, v_headers, v_row_values);
-        ELSE
+            -- Разкладываем отклонение на десятки и единицы
+            v_tens := (v_delta_t0 / 10) * 10;
+            v_units := v_delta_t0 - v_tens;
+            
+            -- Находим значения для десятков и единиц
+            SELECT fn_calc_interpolation_from_array(v_tens::numeric, v_headers, v_row_values) 
+            INTO v_tens_value;
+            
+            SELECT fn_calc_interpolation_from_array(v_units::numeric, v_headers, v_row_values) 
+            INTO v_units_value;
+            
+            -- Складываем
+            IF v_tens_value IS NOT NULL AND v_units_value IS NOT NULL THEN
+                temp_correction := v_tens_value + v_units_value;
+			ELSE
+            	temp_correction := NULL;
+        	END IF;
+		ELSE
             temp_correction := NULL;
         END IF;
         
