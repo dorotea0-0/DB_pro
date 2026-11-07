@@ -1,0 +1,188 @@
+-- Удаляем старые объекты
+DROP FUNCTION IF EXISTS fn_calc_meteo_corrections(parameter_list, int) CASCADE;
+DROP FUNCTION IF EXISTS fn_calc_interpolation_from_array(numeric, int[], int[]) CASCADE;
+
+
+-- Вспомогательная функция: линейная интерполяция по массиву заголовков и значений
+CREATE OR REPLACE FUNCTION fn_calc_interpolation_from_array(
+    p_x numeric,
+    p_headers int[],
+    p_values int[]
+)
+RETURNS numeric AS
+$$
+DECLARE
+    v_x0 numeric;
+    v_y0 numeric;
+    v_x1 numeric;
+    v_y1 numeric;
+    v_result numeric;
+    v_i int;
+    v_len int;
+BEGIN
+    v_len := array_length(p_headers, 1);
+    
+    IF v_len IS NULL OR v_len = 0 OR p_values IS NULL THEN
+        RETURN NULL;
+    END IF;
+    
+    -- Точное совпадение
+    FOR v_i IN 1..v_len
+    LOOP
+        IF p_headers[v_i] = p_x THEN
+            RETURN p_values[v_i]::numeric;
+        END IF;
+    END LOOP;
+    
+    -- Линейная интерполяция
+    FOR v_i IN 1..v_len - 1
+    LOOP
+        IF p_headers[v_i] <= p_x AND p_headers[v_i + 1] >= p_x THEN
+            v_x0 := p_headers[v_i];
+            v_y0 := p_values[v_i];
+            v_x1 := p_headers[v_i + 1];
+            v_y1 := p_values[v_i + 1];
+            
+            IF v_x1 = v_x0 THEN
+                v_result := v_y0;
+            ELSE
+                v_result := v_y0 + (v_y1 - v_y0) * (p_x - v_x0) / (v_x1 - v_x0);
+            END IF;
+            
+            RETURN v_result;
+        END IF;
+    END LOOP;
+    
+    RETURN NULL;
+END;
+$$
+LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION fn_calc_interpolation_from_array(numeric, int[], int[]) 
+IS 'Линейная интерполяция по массиву заголовков и значений';
+
+-- Основная процедура расчета поправок
+CREATE OR REPLACE FUNCTION fn_calc_meteo_corrections(
+    params parameter_list,
+    p_device_id int
+)
+RETURNS TABLE (
+    height integer,
+    temp_correction numeric,
+    wind_speed_correction numeric,
+    wind_dir_correction numeric
+) AS
+$$
+DECLARE
+    v_height_id int;
+    v_height_val int;
+    v_type_t2_pos int;
+    v_type_t2_neg int;
+    v_type_t3_wind int;
+    v_type_t3_dir int;
+    v_row_values int[];
+    v_headers int[];
+    v_wind_value numeric;
+BEGIN
+    -- Определяем типы таблиц по описанию
+    SELECT id INTO v_type_t2_pos 
+    FROM calc_correction_types 
+    WHERE description = 'Таблица 2, Положительные температуры';
+    
+    SELECT id INTO v_type_t2_neg 
+    FROM calc_correction_types 
+    WHERE description = 'Таблица 2, Отрицательные температуры';
+    
+    IF p_device_id = 1 THEN -- ДМК
+        SELECT id INTO v_type_t3_wind 
+        FROM calc_correction_types 
+        WHERE description = 'Таблица 3, Скорость среднего ветра (ДМК)';
+        
+        SELECT id INTO v_type_t3_dir 
+        FROM calc_correction_types 
+        WHERE description = 'Таблица 3, Направление среднего ветра (ДМК)';
+        
+        v_wind_value := params.wind_speed;
+    ELSIF p_device_id = 2 THEN -- ВР
+        SELECT id INTO v_type_t3_wind 
+        FROM calc_correction_types 
+        WHERE description = 'Таблица 3, Скорость среднего ветра (ВР)';
+        
+        SELECT id INTO v_type_t3_dir 
+        FROM calc_correction_types 
+        WHERE description = 'Таблица 3, Направление среднего ветра (ВР)';
+        
+        v_wind_value := params.drift;
+    ELSE
+        RAISE EXCEPTION 'Неизвестный тип оборудования: %. Допустимые значения: 1 (ДМК), 2 (ВР)', p_device_id;
+    END IF;
+    
+    -- Проходим по всем стандартным высотам
+    FOR v_height_id, v_height_val IN 
+        SELECT h.id, h.height 
+        FROM calc_correction_heights h 
+        ORDER BY h.height
+    LOOP
+        -- Температура 
+        IF params.temperature >= 0 THEN
+            SELECT row_values INTO v_row_values
+            FROM calc_correction
+            WHERE height_id = v_height_id AND type_id = v_type_t2_pos;
+        ELSE
+            SELECT row_values INTO v_row_values
+            FROM calc_correction
+            WHERE height_id = v_height_id AND type_id = v_type_t2_neg;
+        END IF;
+        
+        -- Получаем заголовки из родительской записи 
+        SELECT header_values INTO v_headers
+        FROM calc_correction_types
+        WHERE id = 1;
+        
+        IF v_row_values IS NOT NULL AND v_headers IS NOT NULL THEN
+            temp_correction := fn_calc_interpolation_from_array(params.temperature, v_headers, v_row_values);
+        ELSE
+            temp_correction := NULL;
+        END IF;
+        
+        -- Скорость ветра
+        SELECT row_values INTO v_row_values
+        FROM calc_correction
+        WHERE height_id = v_height_id AND type_id = v_type_t3_wind;
+        
+        SELECT header_values INTO v_headers
+        FROM calc_correction_types
+        WHERE id = v_type_t3_wind;
+        
+        IF v_row_values IS NOT NULL AND v_headers IS NOT NULL THEN
+            wind_speed_correction := fn_calc_interpolation_from_array(v_wind_value, v_headers, v_row_values);
+        ELSE
+            wind_speed_correction := NULL;
+        END IF;
+        
+        --Направление ветра
+        SELECT row_values INTO v_row_values
+        FROM calc_correction
+        WHERE height_id = v_height_id AND type_id = v_type_t3_dir;
+        
+        SELECT header_values INTO v_headers
+        FROM calc_correction_types
+        WHERE id = v_type_t3_dir;
+        
+        IF v_row_values IS NOT NULL AND v_headers IS NOT NULL THEN
+            wind_dir_correction := fn_calc_interpolation_from_array(v_wind_value, v_headers, v_row_values);
+        ELSE
+            wind_dir_correction := NULL;
+        END IF;
+        
+        height := v_height_val;
+        RETURN NEXT;
+    END LOOP;
+    
+    RETURN;
+END;
+$$
+LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION fn_calc_meteo_corrections(parameter_list, int) 
+IS 'Расчет метеорологических поправок по каждой стандартной высоте';
