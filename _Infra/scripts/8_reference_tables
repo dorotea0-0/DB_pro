@@ -1,82 +1,122 @@
-
-do
-$do$
-begin
+DO $$
+BEGIN
     -- Удаляем старые объекты
-    drop table if exists correction_factors cascade;
-    drop table if exists device_specs cascade;
+    DROP TABLE IF EXISTS mws_dmk_angle CASCADE;
+    DROP TABLE IF EXISTS mean_wind_speed_dmk CASCADE;
+    DROP TABLE IF EXISTS mws_vr_angle CASCADE;
+    DROP TABLE IF EXISTS mean_wind_speed_vr CASCADE;
+    DROP TABLE IF EXISTS mean_temperature_deviation CASCADE;
+    DROP TABLE IF EXISTS standard_heights CASCADE;
+    
+    DROP SEQUENCE IF EXISTS seq_standard_heights CASCADE;
+    DROP SEQUENCE IF EXISTS seq_mean_temperature_deviation CASCADE;
+    DROP SEQUENCE IF EXISTS seq_mean_wind_speed_vr CASCADE;
+    DROP SEQUENCE IF EXISTS seq_mws_vr_angle CASCADE;
+    DROP SEQUENCE IF EXISTS seq_mean_wind_speed_dmk CASCADE;
+    DROP SEQUENCE IF EXISTS seq_mws_dmk_angle CASCADE;
 
-    -- Технические характеристики устройств
-    -- Хранит диапазоны измерений, точность и единицы для каждого
-    -- параметра каждого устройства (ВР и ДМК)
-    create table device_specs (
-        id int primary key,
-        device_id int not null references devices(id),
-        type_par_id int not null references type_parameter(id),
-        min_value numeric,
-        max_value numeric,
-        accuracy numeric,
-        unit_meas_id int references unit_meas(id),
-        description text
+    -- Справочник стандартных высот
+    CREATE SEQUENCE seq_standard_heights;
+    
+    CREATE TABLE standard_heights (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_standard_heights'),
+        height INTEGER NOT NULL
     );
-    comment on table device_specs is 'Таблица 2: Технические характеристики устройств ВР и ДМК';
-    comment on column device_specs.device_id is 'Устройство (1=ДМК, 2=ВР)';
-    comment on column device_specs.type_par_id is 'Тип измеряемого параметра';
-    comment on column device_specs.min_value is 'Минимальное значение диапазона';
-    comment on column device_specs.max_value is 'Максимальное значение диапазона';
-    comment on column device_specs.accuracy is 'Точность измерения';
-    comment on column device_specs.unit_meas_id is 'Единица измерения';
-    comment on column device_specs.description is 'Описание характеристики';
+    COMMENT ON TABLE standard_heights IS 'Справочник стандартных высот для расчёта';
+    COMMENT ON COLUMN standard_heights.height IS 'Высота в метрах';
 
-    -- ДМК (device_id=1): параметры 1,2,3,4,5
-    insert into device_specs(id, device_id, type_par_id, min_value, max_value, accuracy, unit_meas_id, description) values
-    (1, 1, 1, -100, 500, 1, 1, 'Высота метеопоста: диапазон -100..500 м, точность 1 м'),
-    (2, 1, 2, -58, 58, 0.1, 2, 'Температура: диапазон -58..58 °C, точность 0.1 °C'),
-    (3, 1, 3, 500, 900, 1, 3, 'Давление: диапазон 500..900 мм рт.ст., точность 1 мм рт.ст.'),
-    (4, 1, 4, 0, 59, 1, 4, 'Направление ветра: 0..59 БДУ, точность 1 БДУ'),
-    (5, 1, 5, 0, 15, 1, 5, 'Скорость ветра: 0..15 м/с, точность 1 м/с');
-
-    -- ВР (device_id=2): параметры 1,2,3,4,6
-    insert into device_specs(id, device_id, type_par_id, min_value, max_value, accuracy, unit_meas_id, description) values
-    (6, 2, 1, -100, 500, 1, 1, 'Высота метеопоста: диапазон -100..500 м, точность 1 м'),
-    (7, 2, 2, -58, 58, 0.1, 2, 'Температура: диапазон -58..58 °C, точность 0.1 °C'),
-    (8, 2, 3, 500, 900, 1, 3, 'Давление: диапазон 500..900 мм рт.ст., точность 1 мм рт.ст.'),
-    (9, 2, 4, 0, 59, 1, 4, 'Направление ветра: 0..59 БДУ, точность 1 БДУ'),
-    (10, 2, 6, 0, 150, 1, 1, 'Дальность сноса пуль: 0..150 м, точность 1 м');
-
-    -- Коэффициенты поправок для расчёта
-    -- Хранит поправочные коэффициенты для каждого устройства
-    -- и типа параметра (температурные, баллистические и т.д.)
-    create table correction_factors (
-        id int primary key,
-        device_id int not null references devices(id),
-        type_par_id int not null references type_parameter(id),
-        factor_name text not null,
-        factor_value numeric not null,
-        formula text,
-        description text
+    -- Таблица среднего отклонения температуры
+    CREATE SEQUENCE seq_mean_temperature_deviation;
+    
+    CREATE TABLE mean_temperature_deviation (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mean_temperature_deviation'),
+        height_id INTEGER NOT NULL,
+        temp_delta INTEGER NOT NULL,
+        negative INTEGER NOT NULL,
+        positive INTEGER
     );
-    comment on table correction_factors is 'Таблица 3: Коэффициенты поправок для расчёта ВР и ДМК';
-    comment on column correction_factors.device_id is 'Устройство (1=ДМК, 2=ВР)';
-    comment on column correction_factors.type_par_id is 'Тип параметра';
-    comment on column correction_factors.factor_name is 'Название поправки';
-    comment on column correction_factors.factor_value is 'Значение коэффициента';
-    comment on column correction_factors.formula is 'Формула применения';
-    comment on column correction_factors.description is 'Описание поправки';
+    COMMENT ON TABLE mean_temperature_deviation IS 'Таблица среднего отклонения температуры воздуха (общая для ДМК и ВР)';
+    COMMENT ON COLUMN mean_temperature_deviation.height_id IS 'Ссылка на стандартную высоту';
+    COMMENT ON COLUMN mean_temperature_deviation.temp_delta IS 'Отклонение температуры';
+    COMMENT ON COLUMN mean_temperature_deviation.negative IS 'СОТ при отрицательных значениях';
+    COMMENT ON COLUMN mean_temperature_deviation.positive IS 'СОТ при положительных значениях';
 
-    -- Поправки для ДМК (device_id=1)
-    insert into correction_factors(id, device_id, type_par_id, factor_name, factor_value, formula, description) values
-    (1, 1, 2, 'TEMP_ALTITUDE', -0.0065, 'T_corr = T_meas + factor * altitude', 'Температурный градиент высоты, °C/м'),
-    (2, 1, 3, 'PRESS_ALTITUDE', -0.12, 'P_corr = P_meas + factor * altitude', 'Барометрический градиент, мм рт.ст./м'),
-    (3, 1, 5, 'WIND_GUST', 1.5, 'V_max = V_meas * factor', 'Коэффициент порывов ветра'),
-    (4, 1, 1, 'ALTITUDE_REF', 0, 'H_corr = H_meas - factor', 'Высота приведения к уровню моря, м');
+    -- Таблицы для ВР 
+    
+    -- Скорость среднего ветра для ВР
+    CREATE SEQUENCE seq_mean_wind_speed_vr;
+    
+    CREATE TABLE mean_wind_speed_vr (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mean_wind_speed_vr'),
+        height_id INTEGER NOT NULL,
+        drift_range INTEGER NOT NULL,
+        value INTEGER NOT NULL
+    );
+    COMMENT ON TABLE mean_wind_speed_vr IS 'Скорость среднего ветра для ВР';
+    COMMENT ON COLUMN mean_wind_speed_vr.height_id IS 'Ссылка на стандартную высоту';
+    COMMENT ON COLUMN mean_wind_speed_vr.drift_range IS 'Дальность сноса пуль';
+    COMMENT ON COLUMN mean_wind_speed_vr.value IS 'Значение скорости ветра из таблицы';
 
-    -- Поправки для ВР (device_id=2)
-    insert into correction_factors(id, device_id, type_par_id, factor_name, factor_value, formula, description) values
-    (5, 2, 2, 'TEMP_ALTITUDE', -0.0065, 'T_corr = T_meas + factor * altitude', 'Температурный градиент высоты, °C/м'),
-    (6, 2, 3, 'PRESS_ALTITUDE', -0.12, 'P_corr = P_meas + factor * altitude', 'Барометрический градиент, мм рт.ст./м'),
-    (7, 2, 6, 'DRIFT_WIND', 0.8, 'Drift = V_wind * factor * time', 'Коэффициент сноса пуль от ветра'),
-    (8, 2, 6, 'DRIFT_TEMP', 0.05, 'Drift_corr = Drift * (1 + factor * T)', 'Температурная поправка сноса');
+    -- Величины увеличения угла для ВР
+    CREATE SEQUENCE seq_mws_vr_angle;
+    
+    CREATE TABLE mws_vr_angle (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mws_vr_angle'),
+        height_id INTEGER NOT NULL,
+        value INTEGER NOT NULL
+    );
+    COMMENT ON TABLE mws_vr_angle IS 'Таблица величин увеличения угла для ВР';
+    COMMENT ON COLUMN mws_vr_angle.height_id IS 'Ссылка на стандартную высоту';
+    COMMENT ON COLUMN mws_vr_angle.value IS 'Величина увеличения угла';
 
-end
-$do$;
+    -- Таблицы для ДМК
+    
+    -- Скорость среднего ветра для ДМК
+    CREATE SEQUENCE seq_mean_wind_speed_dmk;
+    
+    CREATE TABLE mean_wind_speed_dmk (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mean_wind_speed_dmk'),
+        height_id INTEGER NOT NULL,
+        wind_speed INTEGER NOT NULL,
+        value INTEGER NOT NULL
+    );
+    COMMENT ON TABLE mean_wind_speed_dmk IS 'Скорость среднего ветра для ДМК';
+    COMMENT ON COLUMN mean_wind_speed_dmk.height_id IS 'Ссылка на стандартную высоту';
+    COMMENT ON COLUMN mean_wind_speed_dmk.wind_speed IS 'Скорость ветра';
+    COMMENT ON COLUMN mean_wind_speed_dmk.value IS 'Значение из таблицы';
+
+    -- Величины увеличения угла для ДМК
+    CREATE SEQUENCE seq_mws_dmk_angle;
+    
+    CREATE TABLE mws_dmk_angle (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mws_dmk_angle'),
+        height_id INTEGER NOT NULL,
+        value INTEGER NOT NULL
+    );
+    COMMENT ON TABLE mws_dmk_angle IS 'Таблица величин увеличения угла для ДМК';
+    COMMENT ON COLUMN mws_dmk_angle.height_id IS 'Ссылка на стандартную высоту';
+    COMMENT ON COLUMN mws_dmk_angle.value IS 'Величина увеличения угла';
+
+    -- Внешние ключи
+    
+    ALTER TABLE mean_temperature_deviation
+        ADD CONSTRAINT fk_mean_temperature_deviation_standard_heights
+        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+
+    ALTER TABLE mean_wind_speed_vr
+        ADD CONSTRAINT fk_mean_wind_speed_vr_standard_heights
+        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+
+    ALTER TABLE mws_vr_angle
+        ADD CONSTRAINT fk_mws_vr_angle_standard_heights
+        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+
+    ALTER TABLE mean_wind_speed_dmk
+        ADD CONSTRAINT fk_mean_wind_speed_dmk_standard_heights
+        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+
+    ALTER TABLE mws_dmk_angle
+        ADD CONSTRAINT fk_mws_dmk_angle_standard_heights
+        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+
+END $$;
