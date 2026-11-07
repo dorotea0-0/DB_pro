@@ -1,0 +1,122 @@
+DO $$
+BEGIN
+    -- Удаляем старые объекты
+    DROP TABLE IF EXISTS mws_dmk_angle CASCADE;
+    DROP TABLE IF EXISTS mean_wind_speed_dmk CASCADE;
+    DROP TABLE IF EXISTS mws_vr_angle CASCADE;
+    DROP TABLE IF EXISTS mean_wind_speed_vr CASCADE;
+    DROP TABLE IF EXISTS mean_temperature_deviation CASCADE;
+    DROP TABLE IF EXISTS standard_heights CASCADE;
+    
+    DROP SEQUENCE IF EXISTS seq_standard_heights CASCADE;
+    DROP SEQUENCE IF EXISTS seq_mean_temperature_deviation CASCADE;
+    DROP SEQUENCE IF EXISTS seq_mean_wind_speed_vr CASCADE;
+    DROP SEQUENCE IF EXISTS seq_mws_vr_angle CASCADE;
+    DROP SEQUENCE IF EXISTS seq_mean_wind_speed_dmk CASCADE;
+    DROP SEQUENCE IF EXISTS seq_mws_dmk_angle CASCADE;
+
+    -- Справочник стандартных высот
+    CREATE SEQUENCE seq_standard_heights;
+    
+    CREATE TABLE standard_heights (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_standard_heights'),
+        height INTEGER NOT NULL
+    );
+    COMMENT ON TABLE standard_heights IS 'Справочник стандартных высот для расчёта';
+    COMMENT ON COLUMN standard_heights.height IS 'Высота в метрах';
+
+    -- Таблица среднего отклонения температуры
+    CREATE SEQUENCE seq_mean_temperature_deviation;
+    
+    CREATE TABLE mean_temperature_deviation (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mean_temperature_deviation'),
+        height_id INTEGER NOT NULL,
+        temp_delta INTEGER NOT NULL,
+        negative INTEGER NOT NULL,
+        positive INTEGER
+    );
+    COMMENT ON TABLE mean_temperature_deviation IS 'Таблица среднего отклонения температуры воздуха (общая для ДМК и ВР)';
+    COMMENT ON COLUMN mean_temperature_deviation.height_id IS 'Ссылка на стандартную высоту';
+    COMMENT ON COLUMN mean_temperature_deviation.temp_delta IS 'Отклонение температуры';
+    COMMENT ON COLUMN mean_temperature_deviation.negative IS 'СОТ при отрицательных значениях';
+    COMMENT ON COLUMN mean_temperature_deviation.positive IS 'СОТ при положительных значениях';
+
+    -- Таблицы для ВР 
+    
+    -- Скорость среднего ветра для ВР
+    CREATE SEQUENCE seq_mean_wind_speed_vr;
+    
+    CREATE TABLE mean_wind_speed_vr (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mean_wind_speed_vr'),
+        height_id INTEGER NOT NULL,
+        drift_range INTEGER NOT NULL,
+        value INTEGER NOT NULL
+    );
+    COMMENT ON TABLE mean_wind_speed_vr IS 'Скорость среднего ветра для ВР';
+    COMMENT ON COLUMN mean_wind_speed_vr.height_id IS 'Ссылка на стандартную высоту';
+    COMMENT ON COLUMN mean_wind_speed_vr.drift_range IS 'Дальность сноса пуль';
+    COMMENT ON COLUMN mean_wind_speed_vr.value IS 'Значение скорости ветра из таблицы';
+
+    -- Величины увеличения угла для ВР
+    CREATE SEQUENCE seq_mws_vr_angle;
+    
+    CREATE TABLE mws_vr_angle (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mws_vr_angle'),
+        height_id INTEGER NOT NULL,
+        value INTEGER NOT NULL
+    );
+    COMMENT ON TABLE mws_vr_angle IS 'Таблица величин увеличения угла для ВР';
+    COMMENT ON COLUMN mws_vr_angle.height_id IS 'Ссылка на стандартную высоту';
+    COMMENT ON COLUMN mws_vr_angle.value IS 'Величина увеличения угла';
+
+    -- Таблицы для ДМК
+    
+    -- Скорость среднего ветра для ДМК
+    CREATE SEQUENCE seq_mean_wind_speed_dmk;
+    
+    CREATE TABLE mean_wind_speed_dmk (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mean_wind_speed_dmk'),
+        height_id INTEGER NOT NULL,
+        wind_speed INTEGER NOT NULL,
+        value INTEGER NOT NULL
+    );
+    COMMENT ON TABLE mean_wind_speed_dmk IS 'Скорость среднего ветра для ДМК';
+    COMMENT ON COLUMN mean_wind_speed_dmk.height_id IS 'Ссылка на стандартную высоту';
+    COMMENT ON COLUMN mean_wind_speed_dmk.wind_speed IS 'Скорость ветра';
+    COMMENT ON COLUMN mean_wind_speed_dmk.value IS 'Значение из таблицы';
+
+    -- Величины увеличения угла для ДМК
+    CREATE SEQUENCE seq_mws_dmk_angle;
+    
+    CREATE TABLE mws_dmk_angle (
+        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mws_dmk_angle'),
+        height_id INTEGER NOT NULL,
+        value INTEGER NOT NULL
+    );
+    COMMENT ON TABLE mws_dmk_angle IS 'Таблица величин увеличения угла для ДМК';
+    COMMENT ON COLUMN mws_dmk_angle.height_id IS 'Ссылка на стандартную высоту';
+    COMMENT ON COLUMN mws_dmk_angle.value IS 'Величина увеличения угла';
+
+    -- Внешние ключи
+    
+    ALTER TABLE mean_temperature_deviation
+        ADD CONSTRAINT fk_mean_temperature_deviation_standard_heights
+        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+
+    ALTER TABLE mean_wind_speed_vr
+        ADD CONSTRAINT fk_mean_wind_speed_vr_standard_heights
+        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+
+    ALTER TABLE mws_vr_angle
+        ADD CONSTRAINT fk_mws_vr_angle_standard_heights
+        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+
+    ALTER TABLE mean_wind_speed_dmk
+        ADD CONSTRAINT fk_mean_wind_speed_dmk_standard_heights
+        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+
+    ALTER TABLE mws_dmk_angle
+        ADD CONSTRAINT fk_mws_dmk_angle_standard_heights
+        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+
+END $$;
