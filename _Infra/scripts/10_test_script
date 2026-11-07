@@ -1,0 +1,71 @@
+DO $$
+declare
+    -- исходные данные
+    v_height int := 100;
+    v_temp numeric := 25.0;
+    v_pressure int := 765;
+    v_wind_dir int := 15;
+    v_wind_speed int := 6;
+    v_device_id int := 1;  -- ДМК
+    
+    -- переменные для расчета
+    v_delta_tv numeric;
+    v_t0 numeric;
+    v_delta_t0 int;
+    v_delta_h0 int;
+    v_ddchm text;
+    v_vvvv text;
+    v_bbb text;
+    v_tt text;
+    v_result text;
+begin
+    select fn_calc_temperature_interpolation(v_temp) into v_delta_tv;
+    
+    v_t0 := v_temp + v_delta_tv;
+    
+    v_delta_t0 := round(v_t0 - 15.9)::int;
+    
+    v_delta_h0 := v_pressure - 750;
+    
+    -- день, час, десятки минут
+    v_ddchm := lpad(extract(day from now())::text, 2, '0') ||
+               lpad(extract(hour from now())::text, 2, '0') ||
+               lpad(floor(extract(minute from now()) / 10)::text, 1, '0');
+    
+    -- высота
+    v_vvvv := lpad(v_height::text, 4, '0');
+    
+    -- отклонение давления
+    if v_delta_h0 >= 0 then
+        v_bbb := lpad(v_delta_h0::text, 3, '0');
+    else
+        v_bbb := '5' || lpad(abs(v_delta_h0)::text, 2, '0');
+    end if;
+    
+    --отклонение температуры
+    if v_delta_t0 >= 0 then
+        v_tt := lpad(v_delta_t0::text, 2, '0');
+    else
+        v_tt := '5' || lpad(abs(v_delta_t0)::text, 1, '0');
+    end if;
+    
+    v_result := v_ddchm || v_vvvv || v_bbb || v_tt;
+end $$;
+
+-- считаем поправки по высотам для ДМК
+select * from fn_calc_meteo_corrections(
+    (100, 25.0, 765, 15, 6, null)::parameter_list,
+    1
+);
+
+-- и для ВР
+select * from fn_calc_meteo_corrections(
+    (100, 25.0, 765, 15, null, 50)::parameter_list,
+    2
+);
+
+-- тест с минусовой температурой
+select * from fn_calc_meteo_corrections(
+    (200, -15.2, 743, 5, 0, null)::parameter_list,
+    1
+);

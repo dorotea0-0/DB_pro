@@ -1,4 +1,14 @@
 DO $$
+DECLARE
+    v_type_t2_pos INT;
+    v_type_t2_neg INT;
+    v_type_t3_wind_vr INT;
+    v_type_t3_wind_dmk INT;
+    v_type_t3_dir_vr INT;
+    v_type_t3_dir_dmk INT;
+        
+    v_h200 INT; v_h400 INT; v_h800 INT; v_h1200 INT;
+
 BEGIN
     -- 1. Очистка старых объектов
     DROP TABLE IF EXISTS calc_correction CASCADE;
@@ -35,8 +45,8 @@ BEGIN
         description TEXT NOT NULL
     );
     COMMENT ON TABLE calc_correction_types IS 'Справочник типов таблиц с собственными заголовками';
-    COMMENT ON COLUMN calc_correction_types.parent_id IS 'Уникальный код владельца (для иерархии)';
-    COMMENT ON COLUMN calc_correction_types.measurment_equipment_id IS 'Тип оборудования (1=ДМК, 2=ВР)';
+    COMMENT ON COLUMN calc_correction_types.parent_id IS 'Уникальный код владельца';
+    COMMENT ON COLUMN calc_correction_types.measurment_equipment_id IS 'Тип оборудования ';
     COMMENT ON COLUMN calc_correction_types.description IS 'Описание таблицы';
 
     -- Новая таблица: Заголовки столбцов для таблиц корректировок
@@ -47,7 +57,7 @@ BEGIN
         sort_order INTEGER NOT NULL
     );
     COMMENT ON TABLE calc_correction_headers IS 'Заголовки столбцов, привязанные к типу таблицы';
-    COMMENT ON COLUMN calc_correction_headers.header_value IS 'Числовое значение заголовка (например, дальность или температура)';
+    COMMENT ON COLUMN calc_correction_headers.header_value IS 'Числовое значение заголовка ';
     COMMENT ON COLUMN calc_correction_headers.sort_order IS 'Порядок сортировки заголовка слева направо';
 
     -- Универсальная таблица значений корректировок
@@ -57,25 +67,28 @@ BEGIN
         type_id INTEGER NOT NULL REFERENCES calc_correction_types(id),
         row_values INTEGER[] NOT NULL
     );
-    COMMENT ON TABLE calc_correction IS 'Универсальная таблица значений корректировок (массив должен совпадать по длине с кол-вом заголовков типа)';
+    COMMENT ON TABLE calc_correction IS 'Универсальная таблица значений корректировок';
     COMMENT ON COLUMN calc_correction.height_id IS 'Код высоты';
     COMMENT ON COLUMN calc_correction.type_id IS 'Код типа таблицы';
     COMMENT ON COLUMN calc_correction.row_values IS 'Массив значений поправок для данной высоты';
 
+	--Создаем таблицу температурных поправок
+	CREATE TABLE IF NOT EXISTS calc_correction_temperature (
+        id INTEGER PRIMARY KEY,
+        temperature NUMERIC NOT NULL,
+        correction NUMERIC NOT NULL
+    );
+    COMMENT ON TABLE calc_correction_temperature IS 'Таблица 1: Виртуальные поправки температуры';
+
+	INSERT INTO calc_correction_temperature (temperature, correction) VALUES
+	(0, 0), (5, 0.5), (10, 1), (15, 1.5), (20, 2), (25, 3.5), (30, 4.5), (40, 4.5)
+	ON CONFLICT DO NOTHING;
+	
     -- 4. Наполнение справочника высот
     INSERT INTO calc_correction_heights (height) VALUES 
     (200), (400), (800), (1200), (1600), (2000), (2400), (3000), (4000);
 
     -- 5. Наполнение типов таблиц и их заголовков
-    DECLARE
-        v_type_t2_pos INT;
-        v_type_t2_neg INT;
-        v_type_t3_wind_vr INT;
-        v_type_t3_wind_dmk INT;
-        v_type_t3_dir_vr INT;
-        v_type_t3_dir_dmk INT;
-        
-        v_h200 INT; v_h400 INT; v_h800 INT; v_h1200 INT;
     BEGIN
         -- Получаем ID высот для удобства вставки
         SELECT id INTO v_h200 FROM calc_correction_heights WHERE height = 200;
@@ -83,7 +96,7 @@ BEGIN
         SELECT id INTO v_h800 FROM calc_correction_heights WHERE height = 800;
         SELECT id INTO v_h1200 FROM calc_correction_heights WHERE height = 1200;
 
-        -- --- Таблица 2: Температурные поправки
+        -- Таблица 2: Температурные поправки
         INSERT INTO calc_correction_types (description) 
         VALUES ('Таблица 2: Метеорологические поправки температуры') RETURNING id INTO v_type_t2_pos;
         
@@ -111,11 +124,15 @@ BEGIN
         INSERT INTO calc_correction (height_id, type_id, row_values) VALUES
         (v_h200, v_type_t2_neg, ARRAY[-1, -2, -3, -4, -5, -6, -7, -8, -8, -9, -20, -29, -39, -49]),
         (v_h400, v_type_t2_neg, ARRAY[-1, -2, -3, -4, -5, -6, -6, -7, -8, -9, -19, -29, -39, -48]),
+		(v_h800, v_type_t2_neg, ARRAY[-1, -2, -3, -4, -5, -6, -6, -7, -7, -8, -18, -28, -37, -46]),
+        (v_h1200, v_type_t2_neg, ARRAY[-1, -2, -3, -4, -4, -5, -5, -6, -7, -8, -17, -26, -35, -44]),
         (v_h200, v_type_t2_pos, ARRAY[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50]),
-        (v_h400, v_type_t2_pos, ARRAY[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50]);
+        (v_h400, v_type_t2_pos, ARRAY[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50]),
+		(v_h800, v_type_t2_pos, ARRAY[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50]),
+        (v_h1200, v_type_t2_pos, ARRAY[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 20, 30, 40, 50]);
 
 
-        -- --- Таблица 3: Ветровые поправки ---
+        --Таблица 3: Ветровые поправки
         INSERT INTO calc_correction_types (description) 
         VALUES ('Таблица 3: Скорость среднего ветра') RETURNING id INTO v_type_t3_wind_vr;
         
@@ -159,22 +176,30 @@ BEGIN
         -- Скорость ветра (ВР)
         INSERT INTO calc_correction (height_id, type_id, row_values) VALUES
         (v_h200, v_type_t3_wind_vr, ARRAY[3, 4, 5, 6, 7, 7, 8, 9, 10, 11, 12, 12]),
-        (v_h400, v_type_t3_wind_vr, ARRAY[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]);
+        (v_h400, v_type_t3_wind_vr, ARRAY[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+        (v_h800, v_type_t3_wind_vr, ARRAY[4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16]),
+        (v_h1200, v_type_t3_wind_vr, ARRAY[4, 5, 7, 8, 8, 9, 11, 12, 13, 15, 15, 16]);
 
         -- Скорость ветра (ДМК)
         INSERT INTO calc_correction (height_id, type_id, row_values) VALUES
         (v_h200, v_type_t3_wind_dmk, ARRAY[4, 6, 8, 9, 10, 12, 14, 15, 16, 18, 20, 21, 22]),
-        (v_h400, v_type_t3_wind_dmk, ARRAY[5, 7, 10, 11, 12, 14, 17, 18, 20, 22, 23, 25, 27]);
+        (v_h400, v_type_t3_wind_dmk, ARRAY[5, 7, 10, 11, 12, 14, 17, 18, 20, 22, 23, 25, 27]),
+        (v_h800, v_type_t3_wind_dmk, ARRAY[5, 8, 10, 11, 13, 15, 18, 19, 21, 23, 25, 27, 28]),
+        (v_h1200, v_type_t3_wind_dmk, ARRAY[5, 8, 11, 12, 13, 16, 19, 20, 23, 24, 26, 28, 30]);
 
         -- Направление ветра (ВР)
         INSERT INTO calc_correction (height_id, type_id, row_values) VALUES
         (v_h200, v_type_t3_dir_vr, ARRAY[0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]),
-        (v_h400, v_type_t3_dir_vr, ARRAY[1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]);
+        (v_h400, v_type_t3_dir_vr, ARRAY[1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]),
+        (v_h800, v_type_t3_dir_vr, ARRAY[1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5]),
+        (v_h1200, v_type_t3_dir_vr, ARRAY[2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5]);
 
         -- Направление ветра (ДМК)
         INSERT INTO calc_correction (height_id, type_id, row_values) VALUES
         (v_h200, v_type_t3_dir_dmk, ARRAY[1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5]),
-        (v_h400, v_type_t3_dir_dmk, ARRAY[2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6]);
+        (v_h400, v_type_t3_dir_dmk, ARRAY[2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6]),
+        (v_h800, v_type_t3_dir_dmk, ARRAY[2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6]),
+        (v_h1200, v_type_t3_dir_dmk, ARRAY[3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7]);
 
     END;
 END $$;

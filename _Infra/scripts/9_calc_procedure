@@ -3,7 +3,7 @@ DROP FUNCTION IF EXISTS fn_calc_meteo_corrections(parameter_list, int) CASCADE;
 DROP FUNCTION IF EXISTS fn_calc_interpolation_from_array(numeric, int[], int[]) CASCADE;
 
 
--- Вспомогательная функция: линейная интерполяция по массиву заголовков и значений
+-- Вспомогательная функция: Линейная интерполяция по массиву заголовков и значений
 CREATE OR REPLACE FUNCTION fn_calc_interpolation_from_array(
     p_x numeric,
     p_headers int[],
@@ -83,34 +83,35 @@ DECLARE
     v_row_values int[];
     v_headers int[];
     v_wind_value numeric;
+	v_current_type_id int;
 BEGIN
     -- Определяем типы таблиц по описанию
     SELECT id INTO v_type_t2_pos 
     FROM calc_correction_types 
-    WHERE description = 'Таблица 2, Положительные температуры';
+    WHERE description = 'Таблица 2: Положительные отклонения температуры';
     
     SELECT id INTO v_type_t2_neg 
     FROM calc_correction_types 
-    WHERE description = 'Таблица 2, Отрицательные температуры';
+    WHERE description = 'Таблица 2: Отрицательные отклонения температуры';
     
     IF p_device_id = 1 THEN -- ДМК
         SELECT id INTO v_type_t3_wind 
         FROM calc_correction_types 
-        WHERE description = 'Таблица 3, Скорость среднего ветра (ДМК)';
+        WHERE description = 'Таблица 3: Скорость среднего ветра (ДМК)';
         
         SELECT id INTO v_type_t3_dir 
         FROM calc_correction_types 
-        WHERE description = 'Таблица 3, Направление среднего ветра (ДМК)';
+        WHERE description = 'Таблица 3: Направление среднего ветра (ДМК)';
         
         v_wind_value := params.wind_speed;
     ELSIF p_device_id = 2 THEN -- ВР
         SELECT id INTO v_type_t3_wind 
         FROM calc_correction_types 
-        WHERE description = 'Таблица 3, Скорость среднего ветра (ВР)';
+        WHERE description = 'Таблица 3: Скорость среднего ветра (ВР)';
         
         SELECT id INTO v_type_t3_dir 
         FROM calc_correction_types 
-        WHERE description = 'Таблица 3, Направление среднего ветра (ВР)';
+        WHERE description = 'Таблица 3: Направление среднего ветра (ВР)';
         
         v_wind_value := params.drift;
     ELSE
@@ -128,16 +129,18 @@ BEGIN
             SELECT row_values INTO v_row_values
             FROM calc_correction
             WHERE height_id = v_height_id AND type_id = v_type_t2_pos;
+			v_current_type_id := v_type_t2_pos;
         ELSE
             SELECT row_values INTO v_row_values
             FROM calc_correction
             WHERE height_id = v_height_id AND type_id = v_type_t2_neg;
-        END IF;
+        	v_current_type_id := v_type_t2_neg;
+		END IF;
         
         -- Получаем заголовки из родительской записи 
-        SELECT header_values INTO v_headers
-        FROM calc_correction_types
-        WHERE id = 1;
+        SELECT array_agg(header_value ORDER BY sort_order) INTO v_headers
+        FROM calc_correction_headers
+        WHERE type_id = v_current_type_id;
         
         IF v_row_values IS NOT NULL AND v_headers IS NOT NULL THEN
             temp_correction := fn_calc_interpolation_from_array(params.temperature, v_headers, v_row_values);
@@ -150,9 +153,9 @@ BEGIN
         FROM calc_correction
         WHERE height_id = v_height_id AND type_id = v_type_t3_wind;
         
-        SELECT header_values INTO v_headers
-        FROM calc_correction_types
-        WHERE id = v_type_t3_wind;
+        SELECT array_agg(header_value ORDER BY sort_order) INTO v_headers
+        FROM calc_correction_headers
+        WHERE type_id = v_type_t3_wind;
         
         IF v_row_values IS NOT NULL AND v_headers IS NOT NULL THEN
             wind_speed_correction := fn_calc_interpolation_from_array(v_wind_value, v_headers, v_row_values);
@@ -165,9 +168,9 @@ BEGIN
         FROM calc_correction
         WHERE height_id = v_height_id AND type_id = v_type_t3_dir;
         
-        SELECT header_values INTO v_headers
-        FROM calc_correction_types
-        WHERE id = v_type_t3_dir;
+        SELECT array_agg(header_value ORDER BY sort_order) INTO v_headers
+        FROM calc_correction_headers
+        WHERE type_id = v_type_t3_dir;
         
         IF v_row_values IS NOT NULL AND v_headers IS NOT NULL THEN
             wind_dir_correction := fn_calc_interpolation_from_array(v_wind_value, v_headers, v_row_values);
