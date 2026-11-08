@@ -2,6 +2,7 @@
 DROP FUNCTION IF EXISTS fn_calc_meteo_corrections(parameter_list, int) CASCADE;
 DROP FUNCTION IF EXISTS fn_calc_interpolation_from_array(numeric, int[], int[]) CASCADE;
 DROP FUNCTION IF EXISTS fn_format_bulletin_header(int, int, numeric, numeric) CASCADE;
+DROP PROCEDURE IF EXISTS pr_calc_meteo_corrections(parameter_list, int) CASCADE;
 
 -- Вспомогательная функция: Линейная интерполяция по массиву заголовков и значений
 CREATE OR REPLACE FUNCTION fn_calc_interpolation_from_array(
@@ -139,27 +140,24 @@ DECLARE
     v_tens_value numeric;
     v_units_value numeric;
 BEGIN
+	
     -- Определяем типы таблиц по описанию
     SELECT id INTO v_type_t2_pos 
     FROM calc_correction_types 
-    WHERE description LIKE '%Положительные%температур%';
-    
+	WHERE parent_id = 1 AND is_positive = true;
+	
     SELECT id INTO v_type_t2_neg 
     FROM calc_correction_types 
-    WHERE description LIKE '%Отрицательные%температур%';
-
+	WHERE parent_id = 1 AND is_positive = false;
+	
 	-- Ветровые поправки
-	SELECT cct.id INTO v_type_t3_wind 
-    FROM calc_correction_types cct
-    JOIN calc_correction_types parent ON cct.parent_id = parent.id
-    WHERE parent.description LIKE '%Скорость среднего ветра%' 
-      AND cct.measurment_equipment_id = p_device_id;
+	SELECT id INTO v_type_t3_wind 
+	FROM calc_correction_types 
+	WHERE parent_id = 4 AND measurment_equipment_id = p_device_id;
     
-    SELECT cct.id INTO v_type_t3_dir 
-    FROM calc_correction_types cct
-    JOIN calc_correction_types parent ON cct.parent_id = parent.id
-    WHERE parent.description LIKE '%Направление среднего ветра%' 
-      AND cct.measurment_equipment_id = p_device_id;
+	SELECT id INTO v_type_t3_dir 
+	FROM calc_correction_types 
+	WHERE parent_id = 7 AND measurment_equipment_id = p_device_id;
 	  
     -- Определяем значение ветра в зависимости от оборудования
     IF p_device_id = 1 THEN
@@ -262,3 +260,27 @@ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION fn_calc_meteo_corrections(parameter_list, int) 
 IS 'Расчет метеорологических поправок по каждой стандартной высоте';
+
+-- Процедура расчета поправок
+CREATE OR REPLACE PROCEDURE pr_calc_meteo_corrections(
+    params parameter_list,
+    p_device_id int
+) AS $$
+DECLARE
+    v_height int;
+    v_temp numeric;
+    v_wind_speed numeric;
+    v_wind_dir numeric;
+BEGIN
+    FOR v_height, v_temp, v_wind_speed, v_wind_dir IN
+        SELECT height, temp_correction, wind_speed_correction, wind_dir_correction
+        FROM fn_calc_meteo_corrections(params, p_device_id)
+    LOOP
+        RAISE NOTICE '% м | % | % | %',
+            v_height, v_temp, v_wind_speed, v_wind_dir;
+    END LOOP;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON PROCEDURE pr_calc_meteo_corrections(parameter_list, int) 
+IS 'Процедура расчета метеорологических поправок с выводом результатов';

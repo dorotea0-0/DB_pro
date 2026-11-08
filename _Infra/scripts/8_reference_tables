@@ -42,6 +42,7 @@ BEGIN
         id INTEGER PRIMARY KEY DEFAULT nextval('calc_correction_types_seq'),
         parent_id INTEGER REFERENCES calc_correction_types(id),
         measurment_equipment_id INTEGER,
+		is_positive BOOLEAN,
         description TEXT NOT NULL
     );
     COMMENT ON TABLE calc_correction_types IS 'Справочник типов таблиц с собственными заголовками';
@@ -103,11 +104,11 @@ BEGIN
         INSERT INTO calc_correction_types (description) 
         VALUES ('Таблица 2: Метеорологические поправки температуры') RETURNING id INTO v_type_t2_pos;
         
-        INSERT INTO calc_correction_types (parent_id, description) 
-        VALUES (v_type_t2_pos, 'Таблица 2: Положительные отклонения температуры') RETURNING id INTO v_type_t2_pos;
+        INSERT INTO calc_correction_types (parent_id,is_positive, description) 
+        VALUES (v_type_t2_pos, true, 'Таблица 2: Положительные отклонения температуры') RETURNING id INTO v_type_t2_pos;
         
-        INSERT INTO calc_correction_types (parent_id, description) 
-        VALUES (v_type_t2_pos, 'Таблица 2: Отрицательные отклонения температуры') RETURNING id INTO v_type_t2_neg;
+        INSERT INTO calc_correction_types (parent_id,is_positive, description) 
+        VALUES (v_type_t2_pos, false,  'Таблица 2: Отрицательные отклонения температуры') RETURNING id INTO v_type_t2_neg;
 
         -- Заголовки для Таблицы 2 (пол)
         INSERT INTO calc_correction_headers (type_id, header_value, sort_order) VALUES
