@@ -1,122 +1,279 @@
 DO $$
+DECLARE
+    v_type_t2_pos INT;
+    v_type_t2_neg INT;
+    v_type_t3_wind_vr INT;
+    v_type_t3_wind_dmk INT;
+    v_type_t3_dir_vr INT;
+    v_type_t3_dir_dmk INT;
+        
+    v_h200 INT; v_h400 INT; v_h800 INT; v_h1200 INT;
+
 BEGIN
-    -- Удаляем старые объекты
-    DROP TABLE IF EXISTS mws_dmk_angle CASCADE;
-    DROP TABLE IF EXISTS mean_wind_speed_dmk CASCADE;
-    DROP TABLE IF EXISTS mws_vr_angle CASCADE;
-    DROP TABLE IF EXISTS mean_wind_speed_vr CASCADE;
-    DROP TABLE IF EXISTS mean_temperature_deviation CASCADE;
-    DROP TABLE IF EXISTS standard_heights CASCADE;
+    -- 1. Очистка старых объектов
+    DROP TABLE IF EXISTS calc_correction CASCADE;
+    DROP TABLE IF EXISTS calc_correction_headers CASCADE;
+    DROP TABLE IF EXISTS calc_correction_types CASCADE;
+    DROP TABLE IF EXISTS calc_correction_heights CASCADE;
     
-    DROP SEQUENCE IF EXISTS seq_standard_heights CASCADE;
-    DROP SEQUENCE IF EXISTS seq_mean_temperature_deviation CASCADE;
-    DROP SEQUENCE IF EXISTS seq_mean_wind_speed_vr CASCADE;
-    DROP SEQUENCE IF EXISTS seq_mws_vr_angle CASCADE;
-    DROP SEQUENCE IF EXISTS seq_mean_wind_speed_dmk CASCADE;
-    DROP SEQUENCE IF EXISTS seq_mws_dmk_angle CASCADE;
+    DROP SEQUENCE IF EXISTS calc_correction_seq CASCADE;
+    DROP SEQUENCE IF EXISTS calc_correction_headers_seq CASCADE;
+    DROP SEQUENCE IF EXISTS calc_correction_types_seq CASCADE;
+    DROP SEQUENCE IF EXISTS calc_correction_height_seq CASCADE;
 
-    -- Справочник стандартных высот
-    CREATE SEQUENCE seq_standard_heights;
+    -- 2. Создание последовательностей
+    CREATE SEQUENCE calc_correction_height_seq;
+    CREATE SEQUENCE calc_correction_types_seq;
+    CREATE SEQUENCE calc_correction_headers_seq;
+    CREATE SEQUENCE calc_correction_seq;
+
+    -- 3. Создание таблиц
     
-    CREATE TABLE standard_heights (
-        id INTEGER PRIMARY KEY DEFAULT nextval('seq_standard_heights'),
-        height INTEGER NOT NULL
+    -- Таблица стандартных высот
+    CREATE TABLE calc_correction_heights (
+        id INTEGER PRIMARY KEY DEFAULT nextval('calc_correction_height_seq'),
+        height INTEGER NOT NULL UNIQUE
     );
-    COMMENT ON TABLE standard_heights IS 'Справочник стандартных высот для расчёта';
-    COMMENT ON COLUMN standard_heights.height IS 'Высота в метрах';
+    COMMENT ON TABLE calc_correction_heights IS 'Справочник стандартных высот для расчёта поправок';
+    COMMENT ON COLUMN calc_correction_heights.height IS 'Высота в метрах';
 
-    -- Таблица среднего отклонения температуры
-    CREATE SEQUENCE seq_mean_temperature_deviation;
-    
-    CREATE TABLE mean_temperature_deviation (
-        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mean_temperature_deviation'),
-        height_id INTEGER NOT NULL,
-        temp_delta INTEGER NOT NULL,
-        negative INTEGER NOT NULL,
-        positive INTEGER
+    -- Справочник типов таблиц корректировок
+    CREATE TABLE calc_correction_types (
+        id INTEGER PRIMARY KEY DEFAULT nextval('calc_correction_types_seq'),
+        parent_id INTEGER REFERENCES calc_correction_types(id),
+        measurment_equipment_id INTEGER,
+		is_positive BOOLEAN,
+        description TEXT NOT NULL
     );
-    COMMENT ON TABLE mean_temperature_deviation IS 'Таблица среднего отклонения температуры воздуха (общая для ДМК и ВР)';
-    COMMENT ON COLUMN mean_temperature_deviation.height_id IS 'Ссылка на стандартную высоту';
-    COMMENT ON COLUMN mean_temperature_deviation.temp_delta IS 'Отклонение температуры';
-    COMMENT ON COLUMN mean_temperature_deviation.negative IS 'СОТ при отрицательных значениях';
-    COMMENT ON COLUMN mean_temperature_deviation.positive IS 'СОТ при положительных значениях';
+    COMMENT ON TABLE calc_correction_types IS 'Справочник типов таблиц с собственными заголовками';
+    COMMENT ON COLUMN calc_correction_types.parent_id IS 'Уникальный код владельца';
+    COMMENT ON COLUMN calc_correction_types.measurment_equipment_id IS 'Тип оборудования ';
+    COMMENT ON COLUMN calc_correction_types.description IS 'Описание таблицы';
 
-    -- Таблицы для ВР 
-    
-    -- Скорость среднего ветра для ВР
-    CREATE SEQUENCE seq_mean_wind_speed_vr;
-    
-    CREATE TABLE mean_wind_speed_vr (
-        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mean_wind_speed_vr'),
-        height_id INTEGER NOT NULL,
-        drift_range INTEGER NOT NULL,
-        value INTEGER NOT NULL
+    -- Новая таблица: Заголовки столбцов для таблиц корректировок
+    CREATE TABLE calc_correction_headers (
+        id INTEGER PRIMARY KEY DEFAULT nextval('calc_correction_headers_seq'),
+        type_id INTEGER NOT NULL REFERENCES calc_correction_types(id),
+        header_value INTEGER NOT NULL,
+        sort_order INTEGER NOT NULL
     );
-    COMMENT ON TABLE mean_wind_speed_vr IS 'Скорость среднего ветра для ВР';
-    COMMENT ON COLUMN mean_wind_speed_vr.height_id IS 'Ссылка на стандартную высоту';
-    COMMENT ON COLUMN mean_wind_speed_vr.drift_range IS 'Дальность сноса пуль';
-    COMMENT ON COLUMN mean_wind_speed_vr.value IS 'Значение скорости ветра из таблицы';
+    COMMENT ON TABLE calc_correction_headers IS 'Заголовки столбцов, привязанные к типу таблицы';
+    COMMENT ON COLUMN calc_correction_headers.header_value IS 'Числовое значение заголовка ';
+    COMMENT ON COLUMN calc_correction_headers.sort_order IS 'Порядок сортировки заголовка слева направо';
 
-    -- Величины увеличения угла для ВР
-    CREATE SEQUENCE seq_mws_vr_angle;
-    
-    CREATE TABLE mws_vr_angle (
-        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mws_vr_angle'),
-        height_id INTEGER NOT NULL,
-        value INTEGER NOT NULL
+    -- Универсальная таблица значений корректировок
+    CREATE TABLE calc_correction (
+        id INTEGER PRIMARY KEY DEFAULT nextval('calc_correction_seq'),
+        height_id INTEGER NOT NULL REFERENCES calc_correction_heights(id),
+        type_id INTEGER NOT NULL REFERENCES calc_correction_types(id),
+        row_values INTEGER[] NOT NULL
     );
-    COMMENT ON TABLE mws_vr_angle IS 'Таблица величин увеличения угла для ВР';
-    COMMENT ON COLUMN mws_vr_angle.height_id IS 'Ссылка на стандартную высоту';
-    COMMENT ON COLUMN mws_vr_angle.value IS 'Величина увеличения угла';
+    COMMENT ON TABLE calc_correction IS 'Универсальная таблица значений корректировок';
+    COMMENT ON COLUMN calc_correction.height_id IS 'Код высоты';
+    COMMENT ON COLUMN calc_correction.type_id IS 'Код типа таблицы';
+    COMMENT ON COLUMN calc_correction.row_values IS 'Массив значений поправок для данной высоты';
 
-    -- Таблицы для ДМК
-    
-    -- Скорость среднего ветра для ДМК
-    CREATE SEQUENCE seq_mean_wind_speed_dmk;
-    
-    CREATE TABLE mean_wind_speed_dmk (
-        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mean_wind_speed_dmk'),
-        height_id INTEGER NOT NULL,
-        wind_speed INTEGER NOT NULL,
-        value INTEGER NOT NULL
+	--Создаем таблицу температурных поправок
+	CREATE TABLE IF NOT EXISTS calc_correction_temperature (
+        id INTEGER PRIMARY KEY,
+        temperature NUMERIC NOT NULL,
+        correction NUMERIC NOT NULL
     );
-    COMMENT ON TABLE mean_wind_speed_dmk IS 'Скорость среднего ветра для ДМК';
-    COMMENT ON COLUMN mean_wind_speed_dmk.height_id IS 'Ссылка на стандартную высоту';
-    COMMENT ON COLUMN mean_wind_speed_dmk.wind_speed IS 'Скорость ветра';
-    COMMENT ON COLUMN mean_wind_speed_dmk.value IS 'Значение из таблицы';
+    COMMENT ON TABLE calc_correction_temperature IS 'Таблица 1: Виртуальные поправки температуры';
 
-    -- Величины увеличения угла для ДМК
-    CREATE SEQUENCE seq_mws_dmk_angle;
-    
-    CREATE TABLE mws_dmk_angle (
-        id INTEGER PRIMARY KEY DEFAULT nextval('seq_mws_dmk_angle'),
-        height_id INTEGER NOT NULL,
-        value INTEGER NOT NULL
-    );
-    COMMENT ON TABLE mws_dmk_angle IS 'Таблица величин увеличения угла для ДМК';
-    COMMENT ON COLUMN mws_dmk_angle.height_id IS 'Ссылка на стандартную высоту';
-    COMMENT ON COLUMN mws_dmk_angle.value IS 'Величина увеличения угла';
+	INSERT INTO calc_correction_temperature (id, temperature, correction) VALUES
+	(1, -50, 0), (2, -40, 0), (3, -30, 0), (4, -20, 0), 
+	(5, -10, 0), (6, -5, 0), (7, -1, 0),
+	(8,  0,  0), (9,  5,  0.5), (10, 10,  1), (11, 15,  1.5),
+	(12, 20,  2), (13, 25,  2), (14, 30,  3.5), (15, 40,  4.5)
+	ON CONFLICT (id) DO NOTHING;
+	
+    -- 4. Наполнение справочника высот
+    INSERT INTO calc_correction_heights (height) VALUES 
+    (200), (400), (800), (1200), (1600), (2000), (2400), (3000), (4000);
 
-    -- Внешние ключи
-    
-    ALTER TABLE mean_temperature_deviation
-        ADD CONSTRAINT fk_mean_temperature_deviation_standard_heights
-        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+    -- 5. Наполнение типов таблиц и их заголовков
+    BEGIN
+        -- Получаем ID высот для удобства вставки
+        SELECT id INTO v_h200 FROM calc_correction_heights WHERE height = 200;
+        SELECT id INTO v_h400 FROM calc_correction_heights WHERE height = 400;
+        SELECT id INTO v_h800 FROM calc_correction_heights WHERE height = 800;
+        SELECT id INTO v_h1200 FROM calc_correction_heights WHERE height = 1200;
 
-    ALTER TABLE mean_wind_speed_vr
-        ADD CONSTRAINT fk_mean_wind_speed_vr_standard_heights
-        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+        -- Таблица 2: Температурные поправки
+        INSERT INTO calc_correction_types (description) 
+        VALUES ('Таблица 2: Метеорологические поправки температуры') RETURNING id INTO v_type_t2_pos;
+        
+        INSERT INTO calc_correction_types (parent_id,is_positive, description) 
+        VALUES (v_type_t2_pos, true, 'Таблица 2: Положительные отклонения температуры') RETURNING id INTO v_type_t2_pos;
+        
+        INSERT INTO calc_correction_types (parent_id,is_positive, description) 
+        VALUES (v_type_t2_pos, false,  'Таблица 2: Отрицательные отклонения температуры') RETURNING id INTO v_type_t2_neg;
 
-    ALTER TABLE mws_vr_angle
-        ADD CONSTRAINT fk_mws_vr_angle_standard_heights
-        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+        -- Заголовки для Таблицы 2 (пол)
+        INSERT INTO calc_correction_headers (type_id, header_value, sort_order) VALUES
+        (v_type_t2_pos, 1, 1), (v_type_t2_pos, 2, 2), (v_type_t2_pos, 3, 3), (v_type_t2_pos, 4, 4),
+        (v_type_t2_pos, 5, 5), (v_type_t2_pos, 6, 6), (v_type_t2_pos, 7, 7), (v_type_t2_pos, 8, 8),
+        (v_type_t2_pos, 9, 9), (v_type_t2_pos, 10, 10), (v_type_t2_pos, 20, 11), (v_type_t2_pos, 30, 12),
+        (v_type_t2_pos, 40, 13), (v_type_t2_pos, 50, 14);
 
-    ALTER TABLE mean_wind_speed_dmk
-        ADD CONSTRAINT fk_mean_wind_speed_dmk_standard_heights
-        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+        -- Заголовки для Таблицы 2 (отр)
+        INSERT INTO calc_correction_headers (type_id, header_value, sort_order) VALUES
+        (v_type_t2_neg, -1, 1), (v_type_t2_neg, -2, 2), (v_type_t2_neg, -3, 3), (v_type_t2_neg, -4, 4),
+        (v_type_t2_neg, -5, 5), (v_type_t2_neg, -6, 6), (v_type_t2_neg, -7, 7), (v_type_t2_neg, -8, 8),
+        (v_type_t2_neg, -9, 9), (v_type_t2_neg, -10, 10), (v_type_t2_neg, -20, 11), (v_type_t2_neg, -30, 12),
+        (v_type_t2_neg, -40, 13), (v_type_t2_neg, -50, 14);
 
-    ALTER TABLE mws_dmk_angle
-        ADD CONSTRAINT fk_mws_dmk_angle_standard_heights
-        FOREIGN KEY (height_id) REFERENCES standard_heights(id);
+        -- Данные для Таблицы 2
+        INSERT INTO calc_correction (height_id, type_id, row_values) VALUES
+        (v_h200, v_type_t2_neg, ARRAY[-1, -2, -3, -4, -5, -6, -7, -8, -8, -9, -20, -29, -39, -49]),
+        (v_h400, v_type_t2_neg, ARRAY[-1, -2, -3, -4, -5, -6, -6, -7, -8, -9, -19, -29, -39, -48]),
+		(v_h800, v_type_t2_neg, ARRAY[-1, -2, -3, -4, -5, -6, -6, -7, -7, -8, -18, -28, -37, -46]),
+        (v_h1200, v_type_t2_neg, ARRAY[-1, -2, -3, -4, -4, -5, -5, -6, -7, -8, -17, -26, -35, -44]),
+(v_h200, v_type_t2_pos, ARRAY[1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 20, 29, 39, 49]),
+(v_h400, v_type_t2_pos, ARRAY[1, 2, 3, 4, 5, 6, 7, 8, 8, 9, 19, 28, 38, 48]),
+(v_h800, v_type_t2_pos, ARRAY[1, 2, 3, 4, 5, 6, 7, 7, 7, 8, 18, 27, 37, 46]),
+(v_h1200, v_type_t2_pos, ARRAY[1, 2, 3, 4, 4, 5, 5, 6, 7, 8, 17, 26, 35, 44]);
 
+
+        --Таблица 3: Ветровые поправки
+        INSERT INTO calc_correction_types (description) 
+        VALUES ('Таблица 3: Скорость среднего ветра') RETURNING id INTO v_type_t3_wind_vr;
+        
+        INSERT INTO calc_correction_types (parent_id, measurment_equipment_id, description) 
+        VALUES (v_type_t3_wind_vr, 2, 'Таблица 3: Скорость среднего ветра (ВР)') RETURNING id INTO v_type_t3_wind_vr;
+        
+        INSERT INTO calc_correction_types (parent_id, measurment_equipment_id, description) 
+        VALUES (v_type_t3_wind_vr, 1, 'Таблица 3: Скорость среднего ветра (ДМК)') RETURNING id INTO v_type_t3_wind_dmk;
+
+        INSERT INTO calc_correction_types (description) 
+        VALUES ('Таблица 3: Направление среднего ветра') RETURNING id INTO v_type_t3_dir_vr;
+        
+        INSERT INTO calc_correction_types (parent_id, measurment_equipment_id, description) 
+        VALUES (v_type_t3_dir_vr, 2, 'Таблица 3: Направление среднего ветра (ВР)') RETURNING id INTO v_type_t3_dir_vr;
+        
+        INSERT INTO calc_correction_types (parent_id, measurment_equipment_id, description) 
+        VALUES (v_type_t3_dir_vr, 1, 'Таблица 3: Направление среднего ветра (ДМК)') RETURNING id INTO v_type_t3_dir_dmk;
+
+        -- Заголовки для Таблицы 3: Скорость ветра (ВР)
+        INSERT INTO calc_correction_headers (type_id, header_value, sort_order) VALUES
+        (v_type_t3_wind_vr, 40, 1), (v_type_t3_wind_vr, 50, 2), (v_type_t3_wind_vr, 60, 3), (v_type_t3_wind_vr, 70, 4),
+        (v_type_t3_wind_vr, 80, 5), (v_type_t3_wind_vr, 90, 6), (v_type_t3_wind_vr, 100, 7), (v_type_t3_wind_vr, 110, 8),
+        (v_type_t3_wind_vr, 120, 9), (v_type_t3_wind_vr, 130, 10), (v_type_t3_wind_vr, 140, 11), (v_type_t3_wind_vr, 150, 12);
+
+        -- Заголовки для Таблицы 3: Скорость ветра (ДМК)
+        INSERT INTO calc_correction_headers (type_id, header_value, sort_order) VALUES
+        (v_type_t3_wind_dmk, 3, 1), (v_type_t3_wind_dmk, 4, 2), (v_type_t3_wind_dmk, 5, 3), (v_type_t3_wind_dmk, 6, 4),
+        (v_type_t3_wind_dmk, 7, 5), (v_type_t3_wind_dmk, 8, 6), (v_type_t3_wind_dmk, 9, 7), (v_type_t3_wind_dmk, 10, 8),
+        (v_type_t3_wind_dmk, 11, 9), (v_type_t3_wind_dmk, 12, 10), (v_type_t3_wind_dmk, 13, 11), (v_type_t3_wind_dmk, 14, 12),
+        (v_type_t3_wind_dmk, 15, 13);
+
+        -- Заголовки для Таблицы 3: Направление ветра
+        -- Для ВР
+        INSERT INTO calc_correction_headers (type_id, header_value, sort_order) 
+        SELECT v_type_t3_dir_vr, header_value, sort_order FROM calc_correction_headers WHERE type_id = v_type_t3_wind_vr;
+        -- Для ДМК
+        INSERT INTO calc_correction_headers (type_id, header_value, sort_order) 
+        SELECT v_type_t3_dir_dmk, header_value, sort_order FROM calc_correction_headers WHERE type_id = v_type_t3_wind_dmk;
+
+        -- Данные для Таблицы 3
+        -- Скорость ветра (ВР)
+        INSERT INTO calc_correction (height_id, type_id, row_values) VALUES
+        (v_h200, v_type_t3_wind_vr, ARRAY[3, 4, 5, 6, 7, 7, 8, 9, 10, 11, 12, 12]),
+        (v_h400, v_type_t3_wind_vr, ARRAY[4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15]),
+        (v_h800, v_type_t3_wind_vr, ARRAY[4, 5, 6, 7, 8, 9, 10, 11, 13, 14, 15, 16]),
+        (v_h1200, v_type_t3_wind_vr, ARRAY[4, 5, 7, 8, 8, 9, 11, 12, 13, 15, 15, 16]);
+
+        -- Скорость ветра (ДМК)
+        INSERT INTO calc_correction (height_id, type_id, row_values) VALUES
+        (v_h200, v_type_t3_wind_dmk, ARRAY[4, 6, 8, 9, 10, 12, 14, 15, 16, 18, 20, 21, 22]),
+        (v_h400, v_type_t3_wind_dmk, ARRAY[5, 7, 10, 11, 12, 14, 17, 18, 20, 22, 23, 25, 27]),
+        (v_h800, v_type_t3_wind_dmk, ARRAY[5, 8, 10, 11, 13, 15, 18, 19, 21, 23, 25, 27, 28]),
+        (v_h1200, v_type_t3_wind_dmk, ARRAY[5, 8, 11, 12, 13, 16, 19, 20, 23, 24, 26, 28, 30]);
+
+        -- Направление ветра (ВР)
+        INSERT INTO calc_correction (height_id, type_id, row_values) VALUES
+        (v_h200, v_type_t3_dir_vr, ARRAY[0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4]),
+        (v_h400, v_type_t3_dir_vr, ARRAY[1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]),
+        (v_h800, v_type_t3_dir_vr, ARRAY[1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5]),
+        (v_h1200, v_type_t3_dir_vr, ARRAY[2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5]);
+
+        -- Направление ветра (ДМК)
+        INSERT INTO calc_correction (height_id, type_id, row_values) VALUES
+        (v_h200, v_type_t3_dir_dmk, ARRAY[1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5]),
+        (v_h400, v_type_t3_dir_dmk, ARRAY[2, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6]),
+        (v_h800, v_type_t3_dir_dmk, ARRAY[2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6]),
+        (v_h1200, v_type_t3_dir_dmk, ARRAY[3, 3, 3, 4, 4, 4, 5, 5, 5, 6, 6, 6, 7]);
+
+    END;
 END $$;
+
+-- Функция интерполяции температуры
+
+CREATE OR REPLACE FUNCTION public.fn_calc_temperature_interpolation(
+    par_temperature NUMERIC)
+RETURNS NUMERIC
+LANGUAGE 'plpgsql'
+COST 100
+VOLATILE PARALLEL UNSAFE
+AS $BODY$
+DECLARE 
+    var_result NUMERIC(8,2) DEFAULT 0;
+    var_min_temperature NUMERIC(8,2) DEFAULT 0;
+    var_max_temperature NUMERIC(8,2) DEFAULT 0;
+    var_x0 NUMERIC; var_y0 NUMERIC;
+    var_x1 NUMERIC; var_y1 NUMERIC;
+BEGIN
+    RAISE NOTICE 'Расчет интерполяции для температуры %', par_temperature;
+
+	--проверка на отрицательные температуры
+	IF par_temperature < 0 THEN
+        RETURN 0;
+    END IF;
+	
+    -- Проверка на точное совпадение
+    IF EXISTS (SELECT 1 FROM public.calc_correction_temperature WHERE temperature = par_temperature) THEN
+        SELECT correction INTO var_result 
+        FROM public.calc_correction_temperature
+        WHERE temperature = par_temperature;
+    ELSE    
+        -- Получаем диапазон
+        SELECT MIN(temperature), MAX(temperature) 
+        INTO var_min_temperature, var_max_temperature
+        FROM public.calc_correction_temperature;
+        
+        IF par_temperature < var_min_temperature OR par_temperature > var_max_temperature THEN
+            RAISE EXCEPTION 'Некорректно передан параметр! Значение должно быть в диапазоне: %, %',
+                var_min_temperature, var_max_temperature;
+        END IF;   
+        
+        -- Получаем граничные параметры для линейной интерполяции
+        SELECT t1.temperature, t1.correction 
+        INTO var_x0, var_y0
+        FROM public.calc_correction_temperature AS t1
+        WHERE t1.temperature <= par_temperature
+        ORDER BY t1.temperature DESC
+        LIMIT 1;
+        
+        SELECT t1.temperature, t1.correction 
+        INTO var_x1, var_y1
+        FROM public.calc_correction_temperature AS t1
+        WHERE t1.temperature >= par_temperature
+        ORDER BY t1.temperature ASC
+        LIMIT 1;
+        
+        RAISE NOTICE 'Граничные значения: X0=%, Y0=%, X1=%, Y1=%', var_x0, var_y0, var_x1, var_y1;
+        
+        -- Формула линейной интерполяции
+        IF var_x1 = var_x0 THEN
+            var_result := var_y0;
+        ELSE
+            var_result := var_y0 + (var_y1 - var_y0) * (par_temperature - var_x0) / (var_x1 - var_x0);
+        END IF;
+    END IF;
+    
+    RETURN var_result;
+END;
+$BODY$;
+
+COMMENT ON FUNCTION public.fn_calc_temperature_interpolation(NUMERIC) IS 'Функция для расчета линейной интерполяции температурных поправок';

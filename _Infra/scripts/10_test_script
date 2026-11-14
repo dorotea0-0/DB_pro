@@ -1,0 +1,23 @@
+--Расчет виртуальной поправки
+SELECT fn_calc_temperature_interpolation(25.0) AS delta_tv;
+
+-- Форматирование заголовка бюллетеня
+SELECT fn_format_bulletin_header(100, 765, 25.0, 2.0) AS bulletin_header;
+
+-- считаем поправки по высотам для ДМК
+CALL pr_calc_meteo_corrections(
+    (100, 25.0, 765, 15, 6, null)::parameter_list,
+    1
+);
+
+-- и для ВР
+CALL pr_calc_meteo_corrections(
+    (100, 25.0, 765, 15, null, 50)::parameter_list,
+    2
+);
+
+-- тест с минусовой температурой
+CALL pr_calc_meteo_corrections(
+    (200, -15.2, 743, 5, 0, null)::parameter_list,
+    1
+);
