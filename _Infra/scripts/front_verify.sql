@@ -48,13 +48,16 @@ GROUP BY CONVERT(char(7), dater, 120)
 ORDER BY [месяц];
 
 -- 2.2 Топ товаров по выручке за всю историю.
---связь journal.id с product.productid по артикулу работает, топ совпадает с группой A будущего ABC-анализа
-SELECT TOP 10 id AS [артикул], description AS [товар],
-       SUM(quantity) AS [количество], SUM(amount) AS [сумма]
-FROM journal
-WHERE transtype = 101
-GROUP BY id, description
-ORDER BY [сумма] DESC;
+-- агрегация по id товара через JOIN с product, а не по паре , потому что артикулы переиспользовались и пара раскалывает один товар на две строки.
+SELECT TOP 10 p.id AS [ид товара], p.productid AS [артикул],
+       MAX(p.description) AS [товар],
+       SUM(j.quantity) AS [количество], SUM(j.amount) AS [выручка]
+FROM journal j
+JOIN product p ON p.productid = j.id
+WHERE j.transtype = 101
+GROUP BY p.id, p.productid
+ORDER BY [выручка] DESC;
+
 
 -- 3.1 Закупки по поставщикам и месяцам.
 -- мост bm_StorageOperations.VendorID настоящий, имена подтягиваются, видна концентрация
@@ -109,6 +112,17 @@ WHERE transtype IN (101, 501)
 GROUP BY YEAR(dater), DATEPART(QUARTER, dater),
          CASE WHEN MONTH(dater) <= 6 THEN 1 ELSE 2 END
 ORDER BY [год], [квартал];
+
+-- 4.5 Активность сотрудников по служебным событиям (вход, начало и конец смены).
+-- подтверждает, что персональный разрез есть по явке, а не по выручке.
+SELECT p.personid, p.lastname, p.firstname,
+       SUM(CASE WHEN j.transtype = 301 THEN 1 ELSE 0 END) AS [входов],
+       COUNT(DISTINCT CASE WHEN j.transtype = 386 THEN CAST(j.dater AS date) END) AS [дней со сменой]
+FROM journal j
+JOIN personnel p ON p.personid = TRY_CAST(j.loginid AS int)
+WHERE j.transtype IN (301, 386, 387)
+GROUP BY p.personid, p.lastname, p.firstname
+ORDER BY [дней со сменой] DESC;
 
 -- 5.1 Есть ли готовые срезы остатков.
 -- в таблицах onhand и storagesonhand нет в данных, остаток только вычисляем.
