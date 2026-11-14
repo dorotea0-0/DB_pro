@@ -36,6 +36,15 @@ WHERE so.OperationID = 1 AND j.Period >= '20230101'
 GROUP BY CONVERT(char(7), j.Period, 120)
 ORDER BY [месяц];
 
+--2.0 Проверка связи journal.id с product.productid по артикулу.
+-- Связь проверяется соединением, а не утверждением 
+-- из 119 367 строк продаж 0 без товара, связь сплошная
+SELECT COUNT(*) AS [строк продаж],
+       SUM(CASE WHEN p.id IS NULL THEN 1 ELSE 0 END) AS [без товара]
+FROM journal j
+LEFT JOIN product p ON p.productid = j.id
+WHERE j.transtype = 101;
+
 -- 2.1 Продажи, возвраты и чеки по месяцам за 2023 год.
 -- продажи извлекаются по типу 101, чек собирается по receiptn, возвратов в данных нет.
 SELECT CONVERT(char(7), dater, 120) AS [месяц],
@@ -81,7 +90,6 @@ WHERE so.VendorID > 0
 ORDER BY so.ID DESC;
 
 -- 4.1 Кто реально продает в кассовой ленте.
--- разреза по людям нет, все продажи под технической записью 906.
 SELECT loginid, COUNT(*) AS [строк], MIN(dater) AS [с], MAX(dater) AS [по]
 FROM journal
 WHERE transtype IN (101, 501)
