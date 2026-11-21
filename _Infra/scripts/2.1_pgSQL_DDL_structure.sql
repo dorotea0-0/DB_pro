@@ -1,16 +1,30 @@
+DO $$
+BEGIN
+
 -- Единицы измерения
-CREATE SEQUENCE seq_dim_ranges;
-CREATE TABLE dim_ranges (
+CREATE SEQUENCE IF NOT EXISTS seq_dim_ranges;
+
+CREATE TABLE IF NOT EXISTS dim_ranges (
     id bigint PRIMARY KEY DEFAULT nextval('public.seq_dim_ranges'),
     external_id bigint,
-    name text,
-    factor float,
+    group_id bigint,
+    short_name text,
+    description text,
     date_add timestamp default now()
 );
 
--- Категории
-CREATE SEQUENCE seq_dim_categories;
-CREATE TABLE dim_categories (
+COMMENT ON TABLE dim_ranges IS 'Единицы измерения из bm_classifierSizes';
+COMMENT ON COLUMN dim_ranges.id IS 'Внутренний ключ';
+COMMENT ON COLUMN dim_ranges.external_id IS 'ID из bm_classifierSizes';
+COMMENT ON COLUMN dim_ranges.group_id IS 'GroupID из bm_classifierSizes';
+COMMENT ON COLUMN dim_ranges.short_name IS 'ShortName из bm_classifierSizes';
+COMMENT ON COLUMN dim_ranges.description IS 'Description из bm_classifierSizes';
+COMMENT ON COLUMN dim_ranges.date_add IS 'Дата добавления записи';
+
+-- Категории товаров
+CREATE SEQUENCE IF NOT EXISTS seq_dim_categories;
+
+CREATE TABLE IF NOT EXISTS dim_categories (
     id bigint PRIMARY KEY DEFAULT nextval('public.seq_dim_categories'),
     external_id bigint,
     name text,
@@ -18,9 +32,17 @@ CREATE TABLE dim_categories (
     date_add timestamp default now()
 );
 
+COMMENT ON TABLE dim_categories IS 'Категории товаров из category';
+COMMENT ON COLUMN dim_categories.id IS 'Внутренний ключ';
+COMMENT ON COLUMN dim_categories.external_id IS 'ID из category';
+COMMENT ON COLUMN dim_categories.name IS 'Название категории (description)';
+COMMENT ON COLUMN dim_categories.parent_id IS 'ID родительской категории (ParentID)';
+COMMENT ON COLUMN dim_categories.date_add IS 'Дата добавления записи';
+
 -- Поставщики
-CREATE SEQUENCE seq_dim_vendors;
-CREATE TABLE dim_vendors (
+CREATE SEQUENCE IF NOT EXISTS seq_dim_vendors;
+
+CREATE TABLE IF NOT EXISTS dim_vendors (
     id bigint PRIMARY KEY DEFAULT nextval('public.seq_dim_vendors'),
     external_id bigint,
     name text,
@@ -29,9 +51,18 @@ CREATE TABLE dim_vendors (
     date_add timestamp default now()
 );
 
+COMMENT ON TABLE dim_vendors IS 'Поставщики из vendors с группой из vendorgroup';
+COMMENT ON COLUMN dim_vendors.id IS 'Внутренний ключ';
+COMMENT ON COLUMN dim_vendors.external_id IS 'ID из vendors';
+COMMENT ON COLUMN dim_vendors.name IS 'Краткое наименование (clientid)';
+COMMENT ON COLUMN dim_vendors.parent_id IS 'ID группы поставщика (clientgroup)';
+COMMENT ON COLUMN dim_vendors.parent_name IS 'Название группы (vendorgroup.description)';
+COMMENT ON COLUMN dim_vendors.date_add IS 'Дата добавления записи';
+
 -- Товары
-CREATE SEQUENCE seq_dim_products;
-CREATE TABLE dim_products (
+CREATE SEQUENCE IF NOT EXISTS seq_dim_products;
+
+CREATE TABLE IF NOT EXISTS dim_products (
     id bigint PRIMARY KEY DEFAULT nextval('public.seq_dim_products'),
     external_id bigint,
     name text,
@@ -40,9 +71,18 @@ CREATE TABLE dim_products (
     date_add timestamp default now()
 );
 
+COMMENT ON TABLE dim_products IS 'Товары из product';
+COMMENT ON COLUMN dim_products.id IS 'Внутренний ключ';
+COMMENT ON COLUMN dim_products.external_id IS 'ID из product';
+COMMENT ON COLUMN dim_products.name IS 'Название товара (description)';
+COMMENT ON COLUMN dim_products.category_id IS 'ID категории (subcategoryid)';
+COMMENT ON COLUMN dim_products.vendor_id IS 'ID поставщика (vendorid)';
+COMMENT ON COLUMN dim_products.date_add IS 'Дата добавления записи';
+
 -- Сотрудники
-CREATE SEQUENCE seq_dim_personnel;
-CREATE TABLE dim_personnel (
+CREATE SEQUENCE IF NOT EXISTS seq_dim_personnel;
+
+CREATE TABLE IF NOT EXISTS dim_personnel (
     id bigint PRIMARY KEY DEFAULT nextval('public.seq_dim_personnel'),
     external_id bigint,
     last_name text,
@@ -53,18 +93,36 @@ CREATE TABLE dim_personnel (
     date_add timestamp default now()
 );
 
+COMMENT ON TABLE dim_personnel IS 'Сотрудники из personnel';
+COMMENT ON COLUMN dim_personnel.id IS 'Внутренний ключ';
+COMMENT ON COLUMN dim_personnel.external_id IS 'personid из personnel';
+COMMENT ON COLUMN dim_personnel.last_name IS 'Фамилия (lastname)';
+COMMENT ON COLUMN dim_personnel.first_name IS 'Имя (firstname)';
+COMMENT ON COLUMN dim_personnel.middle_name IS 'Отчество (middlename)';
+COMMENT ON COLUMN dim_personnel.role IS 'Роль / уровень доступа (securityaccess)';
+COMMENT ON COLUMN dim_personnel.is_technical IS 'Признак технической записи (904, 905, 906)';
+COMMENT ON COLUMN dim_personnel.date_add IS 'Дата добавления записи';
+
 -- Склады
-CREATE SEQUENCE seq_dim_storages;
-CREATE TABLE dim_storages (
+CREATE SEQUENCE IF NOT EXISTS seq_dim_storages;
+
+CREATE TABLE IF NOT EXISTS dim_storages (
     id bigint PRIMARY KEY DEFAULT nextval('public.seq_dim_storages'),
     external_id bigint,
     name text,
     date_add timestamp default now()
 );
 
--- Типы операций
-CREATE SEQUENCE seq_dim_operation_types;
-CREATE TABLE dim_operation_types (
+COMMENT ON TABLE dim_storages IS 'Склады из storages';
+COMMENT ON COLUMN dim_storages.id IS 'Внутренний ключ';
+COMMENT ON COLUMN dim_storages.external_id IS 'ID из storages';
+COMMENT ON COLUMN dim_storages.name IS 'Название склада (description)';
+COMMENT ON COLUMN dim_storages.date_add IS 'Дата добавления записи';
+
+-- Типы складских операций
+CREATE SEQUENCE IF NOT EXISTS seq_dim_operation_types;
+
+CREATE TABLE IF NOT EXISTS dim_operation_types (
     id bigint PRIMARY KEY DEFAULT nextval('public.seq_dim_operation_types'),
     external_id bigint,
     name text,
@@ -72,59 +130,11 @@ CREATE TABLE dim_operation_types (
     date_add timestamp default now()
 );
 
--- Факт: закупки
-CREATE SEQUENCE seq_fact_purchases;
-CREATE TABLE fact_purchases (
-    id bigint PRIMARY KEY DEFAULT nextval('public.seq_fact_purchases'),
-    time_id INT,
-    product_id bigint,
-    vendor_id bigint,
-    storage_id bigint,
-    operation_id bigint,
-    quantity NUMERIC(18,4),
-    amount NUMERIC(18,2),
-    taxed_amount NUMERIC(18,2),
-    price NUMERIC(18,2),
-    price_cost NUMERIC(18,2),
-    rows_count INT,
-    date_add timestamp default now()
-);
+COMMENT ON TABLE dim_operation_types IS 'Типы складских операций из bm_StorageOperationsType';
+COMMENT ON COLUMN dim_operation_types.id IS 'Внутренний ключ';
+COMMENT ON COLUMN dim_operation_types.external_id IS 'ID из bm_StorageOperationsType';
+COMMENT ON COLUMN dim_operation_types.name IS 'Название типа (Description)';
+COMMENT ON COLUMN dim_operation_types.factor IS 'Знак движения (Factor)';
+COMMENT ON COLUMN dim_operation_types.date_add IS 'Дата добавления записи';
 
--- Факт: продажи
-CREATE SEQUENCE seq_fact_sales;
-CREATE TABLE fact_sales (
-    id bigint PRIMARY KEY DEFAULT nextval('public.seq_fact_sales'),
-    time_id INT,
-    product_id bigint,
-    storage_id bigint,
-    quantity NUMERIC(18,4),
-    amount NUMERIC(18,2),
-    cost NUMERIC(18,2),
-    discount NUMERIC(18,2),
-    checks_count INT,
-    date_add timestamp default now()
-);
-
--- Факт: активность персонала
-CREATE SEQUENCE seq_fact_personnel;
-CREATE TABLE fact_personnel_activity (
-    id bigint PRIMARY KEY DEFAULT nextval('public.seq_fact_personnel'),
-    time_id INT,
-    person_id bigint,
-    logins INT,
-    shift_days INT,
-    checks INT,
-    revenue NUMERIC(18,2),
-    date_add timestamp default now()
-);
-
--- Факт: остатки
-CREATE SEQUENCE seq_fact_stock;
-CREATE TABLE fact_stock_balance (
-    id bigint PRIMARY KEY DEFAULT nextval('public.seq_fact_stock'),
-    time_id INT,
-    product_id bigint,
-    storage_id bigint,
-    balance NUMERIC(18,4),
-    date_add timestamp default now()
-);
+END $$;
