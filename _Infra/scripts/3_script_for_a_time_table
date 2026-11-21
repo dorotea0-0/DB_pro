@@ -1,0 +1,29 @@
+CREATE SEQUENCE seq_dim_time;
+
+CREATE TABLE dim_time (
+    id bigint PRIMARY KEY DEFAULT nextval('public.seq_dim_time'),
+    time_id INT NOT NULL,
+    month_start DATE NOT NULL,
+    month_end DATE NOT NULL,
+    month_name text NOT NULL,
+    year INT NOT NULL,
+    quarter_num INT NOT NULL,
+    quarter_name text NOT NULL,
+    date_add timestamp default now()
+);
+
+-- Заполнение через generate_series
+INSERT INTO dim_time (time_id, month_start, month_end, month_name, year, quarter_num, quarter_name)
+SELECT DISTINCT
+    EXTRACT(YEAR FROM d) * 10000 + EXTRACT(MONTH FROM d) * 100 + 1 AS time_id,
+    DATE_TRUNC('month', d)::DATE AS month_start,
+    (DATE_TRUNC('month', d) + INTERVAL '1 month - 1 day')::DATE AS month_end,
+    TO_CHAR(d, 'TMMonth YYYY') AS month_name,
+    EXTRACT(YEAR FROM d)::INT AS year,
+    EXTRACT(QUARTER FROM d)::INT AS quarter_num,
+    EXTRACT(QUARTER FROM d)::INT || ' кв ' || EXTRACT(YEAR FROM d)::INT AS quarter_name
+FROM generate_series('2013-01-01'::DATE, '2023-12-31'::DATE, INTERVAL '1 day') AS d
+ORDER BY time_id;
+
+-- Проверка
+SELECT COUNT(*) AS total, MIN(month_start) AS first_month, MAX(month_end) AS last_month FROM dim_time;
